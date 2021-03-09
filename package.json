@@ -1,6 +1,6 @@
 {
   "name": "sorted-btree",
-  "version": "1.4.0",
+  "version": "1.4.1-optimizedDiff",
   "description": "A sorted list of key-value pairs in a fast, typed in-memory B+ tree with a powerful API.",
   "main": "b+tree.js",
   "typings": "b+tree",
@@ -22,7 +22,7 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/qwertie/btree-typescript.git"
+    "url": "git+https://github.com/taylorsw04/btree-typescript.git"
   },
   "keywords": [
     "B+",
@@ -40,9 +40,9 @@
   "author": "David Piepgrass",
   "license": "MIT",
   "bugs": {
-    "url": "https://github.com/qwertie/btree-typescript/issues"
+    "url": "https://github.com/taylorsw04/btree-typescript/issues"
   },
-  "homepage": "https://github.com/qwertie/btree-typescript#readme",
+  "homepage": "https://github.com/taylorsw04/btree-typescript#readme",
   "devDependencies": {
     "@types/bintrees": "^1.0.2",
     "@types/collections": "^5.0.2",
