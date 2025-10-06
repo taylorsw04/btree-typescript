@@ -354,3 +354,202 @@ console.log("### Delta between B+ trees");
     }
   })
 }
+
+console.log();
+console.log("### Merge between B+ trees");
+{
+  console.log();
+  const sizes = [100, 1000, 10000, 100000];
+
+  // Test 1: Non-overlapping ranges (best case - minimal intersections)
+  console.log("# Non-overlapping ranges (disjoint keys)");
+  sizes.forEach((size) => {
+    const tree1 = new BTree();
+    const tree2 = new BTree();
+
+    for (let i = 0; i < size; i++) {
+      tree1.set(i * 2, i * 2);      // Even keys: 0, 2, 4, 6...
+      tree2.set(i * 2 + 1, i * 2 + 1); // Odd keys: 1, 3, 5, 7...
+    }
+
+    const preferLeft = (_k: number, v1: number, _v2: number) => v1;
+    measure(() => `Merge ${size}+${size} non-overlapping trees`, () => {
+      return tree1.merge(tree2, preferLeft);
+    });
+  });
+
+  console.log();
+  console.log("# Adjacent ranges (2 intersection points)");
+  sizes.forEach((size) => {
+    const tree1 = new BTree();
+    const tree2 = new BTree();
+
+    // Tree1: 0-size, Tree2: size-(2*size)
+    for (let i = 0; i < size; i++) {
+      tree1.set(i, i);
+      tree2.set(i + size, i + size);
+    }
+
+    const preferLeft = (_k: number, v1: number, _v2: number) => v1;
+    measure(() => `Merge ${size}+${size} adjacent range trees`, () => {
+      return tree1.merge(tree2, preferLeft);
+    });
+  });
+
+  console.log();
+  console.log("# Interleaved ranges (multiple intersection points)");
+  sizes.forEach((size) => {
+    const tree1 = new BTree();
+    const tree2 = new BTree();
+
+    // Tree1: 0-size, 2*size-3*size
+    // Tree2: size-2*size
+    for (let i = 0; i < size; i++) {
+      tree1.set(i, i);
+      tree1.set(i + 2 * size, i + 2 * size);
+      tree2.set(i + size, i + size);
+    }
+
+    const preferLeft = (_k: number, v1: number, _v2: number) => v1;
+    measure(() => `Merge ${size*2}+${size} interleaved range trees`, () => {
+      return tree1.merge(tree2, preferLeft);
+    });
+  });
+
+  console.log();
+  console.log("# Complete overlap (worst case - all keys intersect)");
+  sizes.forEach((size) => {
+    const tree1 = new BTree();
+    const tree2 = new BTree();
+
+    for (let i = 0; i < size; i++) {
+      tree1.set(i, i);
+      tree2.set(i, i * 10);
+    }
+
+    const preferLeft = (_k: number, v1: number, _v2: number) => v1;
+    measure(() => `Merge ${size}+${size} completely overlapping trees (prefer left)`, () => {
+      return tree1.merge(tree2, preferLeft);
+    });
+  });
+
+  console.log();
+  console.log("# Partial overlap (50% intersection)");
+  sizes.forEach((size) => {
+    const tree1 = new BTree();
+    const tree2 = new BTree();
+
+    // Tree1: 0-(1.5*size)
+    // Tree2: (0.5*size)-(2*size)
+    // Overlap: (0.5*size)-(1.5*size) = 50% of each tree
+    for (let i = 0; i < Math.floor(size * 1.5); i++) {
+      tree1.set(i, i);
+    }
+    for (let i = Math.floor(size * 0.5); i < size * 2; i++) {
+      tree2.set(i, i * 10);
+    }
+
+    const preferLeft = (_k: number, v1: number, _v2: number) => v1;
+    measure(() => `Merge trees with 50% overlap (${Math.floor(size*1.5)}+${Math.floor(size*1.5)} keys)`, () => {
+      return tree1.merge(tree2, preferLeft);
+    });
+  });
+
+  console.log();
+  console.log("# Merge with value combining (sum operation)");
+  sizes.forEach((size) => {
+    const tree1 = new BTree();
+    const tree2 = new BTree();
+
+    for (let i = 0; i < size; i++) {
+      tree1.set(i, i);
+      tree2.set(i, i * 10);
+    }
+
+    const sumValues = (_k: number, v1: number, v2: number) => v1 + v2;
+    measure(() => `Merge ${size}+${size} trees with sum operation on all overlaps`, () => {
+      return tree1.merge(tree2, sumValues);
+    });
+  });
+
+  console.log();
+  console.log("# Merge with selective exclusion (return undefined for some keys)");
+  sizes.forEach((size) => {
+    const tree1 = new BTree();
+    const tree2 = new BTree();
+
+    for (let i = 0; i < size; i++) {
+      tree1.set(i, i);
+      tree2.set(i, i * 10);
+    }
+
+    const excludeEvens = (k: number, v1: number, _v2: number) => k % 2 === 0 ? undefined : v1;
+    measure(() => `Merge ${size}+${size} trees excluding 50% of overlapping keys`, () => {
+      return tree1.merge(tree2, excludeEvens);
+    });
+  });
+
+  console.log();
+  console.log("# Merge random overlaps");
+  sizes.forEach((size) => {
+    const keys1 = makeArray(size, true);
+    const keys2 = makeArray(size, true);
+
+    const tree1 = new BTree();
+    const tree2 = new BTree();
+
+    for (let k of keys1) {
+      tree1.set(k, k);
+    }
+    for (let k of keys2) {
+      tree2.set(k, k * 10);
+    }
+
+    const preferLeft = (_k: number, v1: number, _v2: number) => v1;
+    measure(() => `Merge ${tree1.size}+${tree2.size} trees with random keys`, () => {
+      return tree1.merge(tree2, preferLeft);
+    });
+  });
+
+  console.log();
+  console.log("# Merge with empty tree");
+  sizes.forEach((size) => {
+    const tree1 = new BTree();
+    const tree2 = new BTree();
+
+    for (let i = 0; i < size; i++) {
+      tree1.set(i, i);
+    }
+
+    const preferLeft = (_k: number, v1: number, _v2: number) => v1;
+    measure(() => `Merge ${size}-key tree with empty tree`, () => {
+      return tree1.merge(tree2, preferLeft);
+    });
+  });
+
+  console.log();
+  console.log("# Compare merge vs manual iteration for complete overlap");
+  sizes.forEach((size) => {
+    const tree1 = new BTree();
+    const tree2 = new BTree();
+
+    for (let i = 0; i < size; i++) {
+      tree1.set(i, i);
+      tree2.set(i, i * 10);
+    }
+
+    const preferLeft = (_k: number, v1: number, _v2: number) => v1;
+
+    measure(() => `Merge ${size}+${size} overlapping trees using merge()`, () => {
+      return tree1.merge(tree2, preferLeft);
+    });
+
+    measure(() => `Merge ${size}+${size} overlapping trees using clone+set loop (baseline)`, () => {
+      const result = tree1.clone();
+      tree2.forEachPair((k, v) => {
+        result.set(k, v, false); // Don't overwrite
+      });
+      return result;
+    });
+  });
+}
