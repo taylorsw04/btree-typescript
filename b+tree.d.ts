@@ -326,20 +326,19 @@ export default class BTree<K = any, V = any> implements ISortedMapF<K, V>, ISort
      */
     merge(other: BTree<K, V>, merge: (key: K, leftValue: V, rightValue: V) => V | undefined): BTree<K, V>;
     /**
-     * Helper method to merge a subtree from source into target.
-     * @param target The target tree being built (mutable)
-     * @param sourceNode The current node from the source tree
-     * @param sourceTree The source tree (for comparison function)
-     * @param sourceDepth The depth of sourceNode in the source tree
-     * @param targetHeight The total height of the target tree
+     * Merges tree B into tree M using a dual cursor walk approach.
+     * This avoids O(N) overlap checks by using cursor position to detect overlaps in O(1).
+     * @param target The target tree M (mutable, clone of larger tree)
+     * @param source The source tree B (smaller tree to merge in)
      * @param merge The merge function for conflicting keys
-     * @param swapped Whether the trees were swapped (affects merge parameter order)
+     * @param swapped Whether trees were swapped (affects merge parameter order)
      */
-    private mergeSubtree;
+    private static mergeDualCursor;
     /**
      * Checks if the range [minKey, maxKey] overlaps with any keys in the target tree.
+     * Uses a more efficient check than full tree traversal.
      */
-    private static checkOverlap;
+    private static rangeOverlaps;
     /**
      * Inserts a shared subtree from source into target at the appropriate depth.
      * This implements a standard B-tree insertion algorithm that walks down from the root
@@ -353,6 +352,7 @@ export default class BTree<K = any, V = any> implements ISortedMapF<K, V>, ISort
     /**
      * Recursively walks down the tree to insert a node at a specific depth.
      * Handles splitting along the way as needed.
+     * @returns true if successful, false if failed, or a BNode if the current node split
      */
     private static insertNodeAtDepth;
     /**
