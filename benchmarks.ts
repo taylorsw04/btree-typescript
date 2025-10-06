@@ -373,8 +373,16 @@ console.log("### Merge between B+ trees");
     }
 
     const preferLeft = (_k: number, v1: number, _v2: number) => v1;
-    measure(() => `Merge ${size}+${size} non-overlapping trees`, () => {
+    measure(() => `Merge ${size}+${size} non-overlapping trees using merge()`, () => {
       return tree1.merge(tree2, preferLeft);
+    });
+
+    measure(() => `Merge ${size}+${size} non-overlapping trees using clone+set loop (baseline)`, () => {
+      const result = tree1.clone();
+      tree2.forEachPair((k, v) => {
+        result.set(k, v, false);
+      });
+      return result;
     });
   });
 
@@ -391,8 +399,16 @@ console.log("### Merge between B+ trees");
     }
 
     const preferLeft = (_k: number, v1: number, _v2: number) => v1;
-    measure(() => `Merge ${size}+${size} adjacent range trees`, () => {
+    measure(() => `Merge ${size}+${size} adjacent range trees using merge()`, () => {
       return tree1.merge(tree2, preferLeft);
+    });
+
+    measure(() => `Merge ${size}+${size} adjacent range trees using clone+set loop (baseline)`, () => {
+      const result = tree1.clone();
+      tree2.forEachPair((k, v) => {
+        result.set(k, v, false);
+      });
+      return result;
     });
   });
 
@@ -411,8 +427,16 @@ console.log("### Merge between B+ trees");
     }
 
     const preferLeft = (_k: number, v1: number, _v2: number) => v1;
-    measure(() => `Merge ${size*2}+${size} interleaved range trees`, () => {
+    measure(() => `Merge ${size*2}+${size} interleaved range trees using merge()`, () => {
       return tree1.merge(tree2, preferLeft);
+    });
+
+    measure(() => `Merge ${size*2}+${size} interleaved range trees using clone+set loop (baseline)`, () => {
+      const result = tree1.clone();
+      tree2.forEachPair((k, v) => {
+        result.set(k, v, false);
+      });
+      return result;
     });
   });
 
@@ -450,8 +474,16 @@ console.log("### Merge between B+ trees");
     }
 
     const preferLeft = (_k: number, v1: number, _v2: number) => v1;
-    measure(() => `Merge trees with 50% overlap (${Math.floor(size*1.5)}+${Math.floor(size*1.5)} keys)`, () => {
+    measure(() => `Merge trees with 50% overlap (${Math.floor(size*1.5)}+${Math.floor(size*1.5)} keys) using merge()`, () => {
       return tree1.merge(tree2, preferLeft);
+    });
+
+    measure(() => `Merge trees with 50% overlap (${Math.floor(size*1.5)}+${Math.floor(size*1.5)} keys) using clone+set loop (baseline)`, () => {
+      const result = tree1.clone();
+      tree2.forEachPair((k, v) => {
+        result.set(k, v, false);
+      });
+      return result;
     });
   });
 
@@ -506,8 +538,16 @@ console.log("### Merge between B+ trees");
     }
 
     const preferLeft = (_k: number, v1: number, _v2: number) => v1;
-    measure(() => `Merge ${tree1.size}+${tree2.size} trees with random keys`, () => {
+    measure(() => `Merge ${tree1.size}+${tree2.size} trees with random keys using merge()`, () => {
       return tree1.merge(tree2, preferLeft);
+    });
+
+    measure(() => `Merge ${tree1.size}+${tree2.size} trees with random keys using clone+set loop (baseline)`, () => {
+      const result = tree1.clone();
+      tree2.forEachPair((k, v) => {
+        result.set(k, v, false);
+      });
+      return result;
     });
   });
 
