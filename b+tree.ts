@@ -897,8 +897,126 @@ export default class BTree<K=any, V=any> implements ISortedMapF<K,V>, ISortedMap
    *        intersections is the number of key-range overlap points between the trees.
    */
   merge(other: BTree<K,V>, merge: (key: K, leftValue: V, rightValue: V) => V | undefined): BTree<K,V> {
-    // TODO: Implement efficient merge algorithm
-    throw new Error('merge() not yet implemented');
+    if (other._compare !== this._compare) {
+      throw new Error("Tree comparators are not the same.");
+    }
+
+    // Handle empty tree cases efficiently
+    if (this.isEmpty && other.isEmpty) {
+      return new BTree<K,V>(undefined, this._compare, this._maxNodeSize);
+    }
+    if (this.isEmpty) {
+      return other.clone();
+    }
+    if (other.isEmpty) {
+      return this.clone();
+    }
+
+    // Collect all entries using cursor-based traversal
+    const entries: [K, V][] = [];
+    const { _compare } = this;
+    const thisCursor = BTree.makeDiffCursor(this);
+    const otherCursor = BTree.makeDiffCursor(other);
+
+    let thisSuccess = true, otherSuccess = true, prevCursorOrder = BTree.compare(thisCursor, otherCursor, _compare);
+
+    while (thisSuccess && otherSuccess) {
+      const cursorOrder = BTree.compare(thisCursor, otherCursor, _compare);
+      const { leaf: thisLeaf, levelIndices: thisLevelIndices } = thisCursor;
+      const { leaf: otherLeaf, levelIndices: otherLevelIndices } = otherCursor;
+
+      if (thisLeaf || otherLeaf) {
+        // Only process if not returning from a tie
+        if (prevCursorOrder !== 0) {
+          if (cursorOrder === 0) {
+            // Keys are equal - call merge function
+            if (thisLeaf && otherLeaf) {
+              const valThis = thisLeaf.values[thisLevelIndices[thisLevelIndices.length - 1]];
+              const valOther = otherLeaf.values[otherLevelIndices[otherLevelIndices.length - 1]];
+              const mergedValue = merge(thisCursor.currentKey, valThis, valOther);
+              if (mergedValue !== undefined) {
+                entries.push([thisCursor.currentKey, mergedValue]);
+              }
+            }
+          } else if (cursorOrder > 0 && otherLeaf) {
+            // Only in other tree
+            const otherVal = otherLeaf.values[otherLevelIndices[otherLevelIndices.length - 1]];
+            entries.push([otherCursor.currentKey, otherVal]);
+          } else if (cursorOrder < 0 && thisLeaf) {
+            // Only in this tree
+            const valThis = thisLeaf.values[thisLevelIndices[thisLevelIndices.length - 1]];
+            entries.push([thisCursor.currentKey, valThis]);
+          }
+        }
+      } else if (!thisLeaf && !otherLeaf && cursorOrder === 0) {
+        // Check for shared nodes
+        const lastThis = thisCursor.internalSpine.length - 1;
+        const lastOther = otherCursor.internalSpine.length - 1;
+        const nodeThis = thisCursor.internalSpine[lastThis][thisLevelIndices[lastThis]];
+        const nodeOther = otherCursor.internalSpine[lastOther][otherLevelIndices[lastOther]];
+        if (nodeOther === nodeThis) {
+          // Shared node - add all its entries efficiently
+          const addEntriesFromNode = (node: BNode<K,V>) => {
+            if (node.isLeaf) {
+              for (let i = node.keys.length - 1; i >= 0; i--) {
+                entries.push([node.keys[i], node.values[i]]);
+              }
+            } else {
+              const internal = node as any as BNodeInternal<K,V>;
+              for (let i = internal.children.length - 1; i >= 0; i--) {
+                addEntriesFromNode(internal.children[i]);
+              }
+            }
+          };
+          addEntriesFromNode(nodeThis);
+          prevCursorOrder = 0;
+          thisSuccess = BTree.step(thisCursor, true);
+          otherSuccess = BTree.step(otherCursor, true);
+          continue;
+        }
+      }
+
+      prevCursorOrder = cursorOrder;
+      if (cursorOrder < 0) {
+        thisSuccess = BTree.step(thisCursor);
+      } else {
+        otherSuccess = BTree.step(otherCursor);
+      }
+    }
+
+    // Process remaining entries from whichever tree still has entries
+    // If we just processed a tie (prevCursorOrder == 0), we need to skip the current
+    // position because it was already processed
+    if (thisSuccess) {
+      let canStep = prevCursorOrder === 0 ? BTree.step(thisCursor) : true;
+      while (canStep) {
+        const { leaf, levelIndices, currentKey } = thisCursor;
+        if (leaf) {
+          const value = leaf.values[levelIndices[levelIndices.length - 1]];
+          entries.push([currentKey, value]);
+        }
+        canStep = BTree.step(thisCursor);
+      }
+    }
+
+    if (otherSuccess) {
+      let canStep = prevCursorOrder === 0 ? BTree.step(otherCursor) : true;
+      while (canStep) {
+        const { leaf, levelIndices, currentKey } = otherCursor;
+        if (leaf) {
+          const value = leaf.values[levelIndices[levelIndices.length - 1]];
+          entries.push([currentKey, value]);
+        }
+        canStep = BTree.step(otherCursor);
+      }
+    }
+
+    // Entries are collected in reverse order (cursors walk backwards), so reverse them
+    entries.reverse();
+
+    // Create result tree with all entries
+    const result = new BTree<K,V>(entries, this._compare, this._maxNodeSize);
+    return result;
   }
 
   /** Gets an array filled with the contents of the tree, sorted by key */

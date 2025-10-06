@@ -800,8 +800,124 @@ var BTree = /** @class */ (function () {
      *        intersections is the number of key-range overlap points between the trees.
      */
     BTree.prototype.merge = function (other, merge) {
-        // TODO: Implement efficient merge algorithm
-        throw new Error('merge() not yet implemented');
+        if (other._compare !== this._compare) {
+            throw new Error("Tree comparators are not the same.");
+        }
+        // Handle empty tree cases efficiently
+        if (this.isEmpty && other.isEmpty) {
+            return new BTree(undefined, this._compare, this._maxNodeSize);
+        }
+        if (this.isEmpty) {
+            return other.clone();
+        }
+        if (other.isEmpty) {
+            return this.clone();
+        }
+        // Collect all entries using cursor-based traversal
+        var entries = [];
+        var _compare = this._compare;
+        var thisCursor = BTree.makeDiffCursor(this);
+        var otherCursor = BTree.makeDiffCursor(other);
+        var thisSuccess = true, otherSuccess = true, prevCursorOrder = BTree.compare(thisCursor, otherCursor, _compare);
+        var _loop_1 = function () {
+            var cursorOrder = BTree.compare(thisCursor, otherCursor, _compare);
+            var thisLeaf = thisCursor.leaf, thisLevelIndices = thisCursor.levelIndices;
+            var otherLeaf = otherCursor.leaf, otherLevelIndices = otherCursor.levelIndices;
+            if (thisLeaf || otherLeaf) {
+                // Only process if not returning from a tie
+                if (prevCursorOrder !== 0) {
+                    if (cursorOrder === 0) {
+                        // Keys are equal - call merge function
+                        if (thisLeaf && otherLeaf) {
+                            var valThis = thisLeaf.values[thisLevelIndices[thisLevelIndices.length - 1]];
+                            var valOther = otherLeaf.values[otherLevelIndices[otherLevelIndices.length - 1]];
+                            var mergedValue = merge(thisCursor.currentKey, valThis, valOther);
+                            if (mergedValue !== undefined) {
+                                entries.push([thisCursor.currentKey, mergedValue]);
+                            }
+                        }
+                    }
+                    else if (cursorOrder > 0 && otherLeaf) {
+                        // Only in other tree
+                        var otherVal = otherLeaf.values[otherLevelIndices[otherLevelIndices.length - 1]];
+                        entries.push([otherCursor.currentKey, otherVal]);
+                    }
+                    else if (cursorOrder < 0 && thisLeaf) {
+                        // Only in this tree
+                        var valThis = thisLeaf.values[thisLevelIndices[thisLevelIndices.length - 1]];
+                        entries.push([thisCursor.currentKey, valThis]);
+                    }
+                }
+            }
+            else if (!thisLeaf && !otherLeaf && cursorOrder === 0) {
+                // Check for shared nodes
+                var lastThis = thisCursor.internalSpine.length - 1;
+                var lastOther = otherCursor.internalSpine.length - 1;
+                var nodeThis = thisCursor.internalSpine[lastThis][thisLevelIndices[lastThis]];
+                var nodeOther = otherCursor.internalSpine[lastOther][otherLevelIndices[lastOther]];
+                if (nodeOther === nodeThis) {
+                    // Shared node - add all its entries efficiently
+                    var addEntriesFromNode_1 = function (node) {
+                        if (node.isLeaf) {
+                            for (var i = node.keys.length - 1; i >= 0; i--) {
+                                entries.push([node.keys[i], node.values[i]]);
+                            }
+                        }
+                        else {
+                            var internal = node;
+                            for (var i = internal.children.length - 1; i >= 0; i--) {
+                                addEntriesFromNode_1(internal.children[i]);
+                            }
+                        }
+                    };
+                    addEntriesFromNode_1(nodeThis);
+                    prevCursorOrder = 0;
+                    thisSuccess = BTree.step(thisCursor, true);
+                    otherSuccess = BTree.step(otherCursor, true);
+                    return "continue";
+                }
+            }
+            prevCursorOrder = cursorOrder;
+            if (cursorOrder < 0) {
+                thisSuccess = BTree.step(thisCursor);
+            }
+            else {
+                otherSuccess = BTree.step(otherCursor);
+            }
+        };
+        while (thisSuccess && otherSuccess) {
+            _loop_1();
+        }
+        // Process remaining entries from whichever tree still has entries
+        // If we just processed a tie (prevCursorOrder == 0), we need to skip the current
+        // position because it was already processed
+        if (thisSuccess) {
+            var canStep = prevCursorOrder === 0 ? BTree.step(thisCursor) : true;
+            while (canStep) {
+                var leaf = thisCursor.leaf, levelIndices = thisCursor.levelIndices, currentKey = thisCursor.currentKey;
+                if (leaf) {
+                    var value = leaf.values[levelIndices[levelIndices.length - 1]];
+                    entries.push([currentKey, value]);
+                }
+                canStep = BTree.step(thisCursor);
+            }
+        }
+        if (otherSuccess) {
+            var canStep = prevCursorOrder === 0 ? BTree.step(otherCursor) : true;
+            while (canStep) {
+                var leaf = otherCursor.leaf, levelIndices = otherCursor.levelIndices, currentKey = otherCursor.currentKey;
+                if (leaf) {
+                    var value = leaf.values[levelIndices[levelIndices.length - 1]];
+                    entries.push([currentKey, value]);
+                }
+                canStep = BTree.step(otherCursor);
+            }
+        }
+        // Entries are collected in reverse order (cursors walk backwards), so reverse them
+        entries.reverse();
+        // Create result tree with all entries
+        var result = new BTree(entries, this._compare, this._maxNodeSize);
+        return result;
     };
     /** Gets an array filled with the contents of the tree, sorted by key */
     BTree.prototype.toArray = function (maxLength) {

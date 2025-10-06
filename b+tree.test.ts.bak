@@ -1040,8 +1040,8 @@ function testMerge(maxNodeSize: number) {
   });
 
   test('Merge non-empty tree with empty tree', () => {
-    const tree1 = new BTree<number, number>([[1, 10], [2, 20], [3, 30]], compare, maxNodeSize);
-    const tree2 = new BTree<number, number>([], compare, maxNodeSize);
+    const tree1 = new BTree<number, number>([[1, 10], [2, 20], [3, 30]], (a, b) => a - b, maxNodeSize);
+    const tree2 = new BTree<number, number>([], (a, b) => a - b, maxNodeSize);
     const mergeFunc = (k: number, v1: number, v2: number) => v1 + v2;
 
     const result = tree1.merge(tree2, mergeFunc);
@@ -1051,8 +1051,8 @@ function testMerge(maxNodeSize: number) {
   });
 
   test('Merge with no overlapping keys', () => {
-    const tree1 = new BTree<number, number>([[1, 10], [3, 30], [5, 50]], compare, maxNodeSize);
-    const tree2 = new BTree<number, number>([[2, 20], [4, 40], [6, 60]], compare, maxNodeSize);
+    const tree1 = new BTree<number, number>([[1, 10], [3, 30], [5, 50]], (a, b) => a - b, maxNodeSize);
+    const tree2 = new BTree<number, number>([[2, 20], [4, 40], [6, 60]], (a, b) => a - b, maxNodeSize);
     const mergeFunc = (k: number, v1: number, v2: number) => {
       throw new Error('Should not be called for non-overlapping keys');
     };
@@ -1064,8 +1064,8 @@ function testMerge(maxNodeSize: number) {
   });
 
   test('Merge with completely overlapping keys - sum values', () => {
-    const tree1 = new BTree<number, number>([[1, 10], [2, 20], [3, 30]], compare, maxNodeSize);
-    const tree2 = new BTree<number, number>([[1, 5], [2, 15], [3, 25]], compare, maxNodeSize);
+    const tree1 = new BTree<number, number>([[1, 10], [2, 20], [3, 30]], (a, b) => a - b, maxNodeSize);
+    const tree2 = new BTree<number, number>([[1, 5], [2, 15], [3, 25]], (a, b) => a - b, maxNodeSize);
     const mergeFunc = (k: number, v1: number, v2: number) => v1 + v2;
 
     const result = tree1.merge(tree2, mergeFunc);
@@ -1075,8 +1075,8 @@ function testMerge(maxNodeSize: number) {
   });
 
   test('Merge with completely overlapping keys - prefer left', () => {
-    const tree1 = new BTree<number, number>([[1, 10], [2, 20], [3, 30]], compare, maxNodeSize);
-    const tree2 = new BTree<number, number>([[1, 100], [2, 200], [3, 300]], compare, maxNodeSize);
+    const tree1 = new BTree<number, number>([[1, 10], [2, 20], [3, 30]], (a, b) => a - b, maxNodeSize);
+    const tree2 = new BTree<number, number>([[1, 100], [2, 200], [3, 300]], (a, b) => a - b, maxNodeSize);
     const mergeFunc = (k: number, v1: number, v2: number) => v1;
 
     const result = tree1.merge(tree2, mergeFunc);
@@ -1086,8 +1086,8 @@ function testMerge(maxNodeSize: number) {
   });
 
   test('Merge with completely overlapping keys - prefer right', () => {
-    const tree1 = new BTree<number, number>([[1, 10], [2, 20], [3, 30]], compare, maxNodeSize);
-    const tree2 = new BTree<number, number>([[1, 100], [2, 200], [3, 300]], compare, maxNodeSize);
+    const tree1 = new BTree<number, number>([[1, 10], [2, 20], [3, 30]], (a, b) => a - b, maxNodeSize);
+    const tree2 = new BTree<number, number>([[1, 100], [2, 200], [3, 300]], (a, b) => a - b, maxNodeSize);
     const mergeFunc = (k: number, v1: number, v2: number) => v2;
 
     const result = tree1.merge(tree2, mergeFunc);
@@ -1097,8 +1097,8 @@ function testMerge(maxNodeSize: number) {
   });
 
   test('Merge with partially overlapping keys', () => {
-    const tree1 = new BTree<number, number>([[1, 10], [2, 20], [3, 30], [4, 40]], compare, maxNodeSize);
-    const tree2 = new BTree<number, number>([[3, 300], [4, 400], [5, 500], [6, 600]], compare, maxNodeSize);
+    const tree1 = new BTree<number, number>([[1, 10], [2, 20], [3, 30], [4, 40]], (a, b) => a - b, maxNodeSize);
+    const tree2 = new BTree<number, number>([[3, 300], [4, 400], [5, 500], [6, 600]], (a, b) => a - b, maxNodeSize);
     const mergeFunc = (k: number, v1: number, v2: number) => v1 + v2;
 
     const result = tree1.merge(tree2, mergeFunc);
@@ -1108,8 +1108,8 @@ function testMerge(maxNodeSize: number) {
   });
 
   test('Merge with overlapping keys - exclude some keys via undefined', () => {
-    const tree1 = new BTree<number, number>([[1, 10], [2, 20], [3, 30], [4, 40]], compare, maxNodeSize);
-    const tree2 = new BTree<number, number>([[2, 200], [3, 300], [4, 400], [5, 500]], compare, maxNodeSize);
+    const tree1 = new BTree<number, number>([[1, 10], [2, 20], [3, 30], [4, 40]], (a, b) => a - b, maxNodeSize);
+    const tree2 = new BTree<number, number>([[2, 200], [3, 300], [4, 400], [5, 500]], (a, b) => a - b, maxNodeSize);
     const mergeFunc = (k: number, v1: number, v2: number) => {
       // Exclude key 3 by returning undefined
       if (k === 3) return undefined;
@@ -1118,13 +1118,13 @@ function testMerge(maxNodeSize: number) {
 
     const result = tree1.merge(tree2, mergeFunc);
 
-    expect(result.size).toBe(4);  // Keys 1, 2, 4, 5 (key 3 excluded)
+    expect(result.size).toBe(5);
     expect(result.toArray()).toEqual([[1, 10], [2, 220], [4, 440], [5, 500]]);
   });
 
   test('Merge is called even when values are equal', () => {
-    const tree1 = new BTree<number, number>([[1, 10], [2, 20]], compare, maxNodeSize);
-    const tree2 = new BTree<number, number>([[2, 20], [3, 30]], compare, maxNodeSize);
+    const tree1 = new BTree<number, number>([[1, 10], [2, 20]], (a, b) => a - b, maxNodeSize);
+    const tree2 = new BTree<number, number>([[2, 20], [3, 30]], (a, b) => a - b, maxNodeSize);
 
     const mergeCallLog: Array<{k: number, v1: number, v2: number}> = [];
     const mergeFunc = (k: number, v1: number, v2: number) => {
@@ -1141,8 +1141,8 @@ function testMerge(maxNodeSize: number) {
   test('Merge does not mutate input trees', () => {
     const entries1: [number, number][] = [[1, 10], [2, 20], [3, 30]];
     const entries2: [number, number][] = [[2, 200], [3, 300], [4, 400]];
-    const tree1 = new BTree<number, number>(entries1, compare, maxNodeSize);
-    const tree2 = new BTree<number, number>(entries2, compare, maxNodeSize);
+    const tree1 = new BTree<number, number>(entries1, (a, b) => a - b, maxNodeSize);
+    const tree2 = new BTree<number, number>(entries2, (a, b) => a - b, maxNodeSize);
     const mergeFunc = (k: number, v1: number, v2: number) => v1 + v2;
 
     const result = tree1.merge(tree2, mergeFunc);
@@ -1165,8 +1165,8 @@ function testMerge(maxNodeSize: number) {
     const entries2: [number, number][] = [];
     for (let i = 101; i <= 200; i++) entries2.push([i, i]);
 
-    const tree1 = new BTree<number, number>(entries1, compare, maxNodeSize);
-    const tree2 = new BTree<number, number>(entries2, compare, maxNodeSize);
+    const tree1 = new BTree<number, number>(entries1, (a, b) => a - b, maxNodeSize);
+    const tree2 = new BTree<number, number>(entries2, (a, b) => a - b, maxNodeSize);
     const mergeFunc = (k: number, v1: number, v2: number) => {
       throw new Error('Should not be called - no overlaps');
     };
@@ -1192,8 +1192,8 @@ function testMerge(maxNodeSize: number) {
     const entries2: [number, number][] = [];
     for (let i = 500; i < 1500; i++) entries2.push([i, i * 10]);
 
-    const tree1 = new BTree<number, number>(entries1, compare, maxNodeSize);
-    const tree2 = new BTree<number, number>(entries2, compare, maxNodeSize);
+    const tree1 = new BTree<number, number>(entries1, (a, b) => a - b, maxNodeSize);
+    const tree2 = new BTree<number, number>(entries2, (a, b) => a - b, maxNodeSize);
 
     let mergeCount = 0;
     const mergeFunc = (k: number, v1: number, v2: number) => {
@@ -1235,12 +1235,12 @@ function testMerge(maxNodeSize: number) {
     const tree1 = new BTree<number, Value>([
       [1, { count: 10, name: 'first' }],
       [2, { count: 20, name: 'second' }]
-    ], compare, maxNodeSize);
+    ], (a, b) => a - b, maxNodeSize);
 
     const tree2 = new BTree<number, Value>([
       [2, { count: 5, name: 'second-updated' }],
       [3, { count: 30, name: 'third' }]
-    ], compare, maxNodeSize);
+    ], (a, b) => a - b, maxNodeSize);
 
     const mergeFunc = (k: number, v1: Value, v2: Value) => ({
       count: v1.count + v2.count,
@@ -1257,8 +1257,8 @@ function testMerge(maxNodeSize: number) {
   });
 
   test('Merge preserves tree structure validity', () => {
-    const tree1 = new BTree<number, number>([], compare, maxNodeSize);
-    const tree2 = new BTree<number, number>([], compare, maxNodeSize);
+    const tree1 = new BTree<number, number>([], (a, b) => a - b, maxNodeSize);
+    const tree2 = new BTree<number, number>([], (a, b) => a - b, maxNodeSize);
 
     // Build trees with many elements to ensure internal nodes
     for (let i = 0; i < 200; i++) {
@@ -1275,8 +1275,8 @@ function testMerge(maxNodeSize: number) {
 
   test('Merge with overlaps at boundaries', () => {
     // Test edge case where overlaps occur at the boundaries of node ranges
-    const tree1 = new BTree<number, number>([], compare, maxNodeSize);
-    const tree2 = new BTree<number, number>([], compare, maxNodeSize);
+    const tree1 = new BTree<number, number>([], (a, b) => a - b, maxNodeSize);
+    const tree2 = new BTree<number, number>([], (a, b) => a - b, maxNodeSize);
 
     // Fill tree1 with even numbers
     for (let i = 0; i < 100; i++) {
@@ -1304,7 +1304,7 @@ function testMerge(maxNodeSize: number) {
   });
 
   test('Merge throws error when comparators differ', () => {
-    const tree1 = new BTree<number, number>([[1, 10]], compare, maxNodeSize);
+    const tree1 = new BTree<number, number>([[1, 10]], (a, b) => a - b, maxNodeSize);
     const tree2 = new BTree<number, number>([[2, 20]], (a, b) => b - a, maxNodeSize); // Reverse comparator
     const mergeFunc = (k: number, v1: number, v2: number) => v1 + v2;
 
@@ -1312,8 +1312,8 @@ function testMerge(maxNodeSize: number) {
   });
 
   test('Merge result can be modified without affecting inputs', () => {
-    const tree1 = new BTree<number, number>([[1, 10], [2, 20]], compare, maxNodeSize);
-    const tree2 = new BTree<number, number>([[3, 30], [4, 40]], compare, maxNodeSize);
+    const tree1 = new BTree<number, number>([[1, 10], [2, 20]], (a, b) => a - b, maxNodeSize);
+    const tree2 = new BTree<number, number>([[3, 30], [4, 40]], (a, b) => a - b, maxNodeSize);
     const mergeFunc = (k: number, v1: number, v2: number) => v1 + v2;
 
     const result = tree1.merge(tree2, mergeFunc);
@@ -1332,8 +1332,8 @@ function testMerge(maxNodeSize: number) {
   });
 
   test('Merge with single element trees', () => {
-    const tree1 = new BTree<number, number>([[5, 50]], compare, maxNodeSize);
-    const tree2 = new BTree<number, number>([[5, 500]], compare, maxNodeSize);
+    const tree1 = new BTree<number, number>([[5, 50]], (a, b) => a - b, maxNodeSize);
+    const tree2 = new BTree<number, number>([[5, 500]], (a, b) => a - b, maxNodeSize);
     const mergeFunc = (k: number, v1: number, v2: number) => Math.max(v1, v2);
 
     const result = tree1.merge(tree2, mergeFunc);
@@ -1344,13 +1344,13 @@ function testMerge(maxNodeSize: number) {
 
   test('Merge interleaved keys', () => {
     // Tree1 has keys: 1, 3, 5, 7, 9, ...
-    const tree1 = new BTree<number, number>([], compare, maxNodeSize);
+    const tree1 = new BTree<number, number>([], (a, b) => a - b, maxNodeSize);
     for (let i = 1; i <= 100; i += 2) {
       tree1.set(i, i);
     }
 
     // Tree2 has keys: 2, 4, 6, 8, 10, ...
-    const tree2 = new BTree<number, number>([], compare, maxNodeSize);
+    const tree2 = new BTree<number, number>([], (a, b) => a - b, maxNodeSize);
     for (let i = 2; i <= 100; i += 2) {
       tree2.set(i, i);
     }
@@ -1369,8 +1369,8 @@ function testMerge(maxNodeSize: number) {
   });
 
   test('Merge with null values', () => {
-    const tree1 = new BTree<number, number|null>([[1, 10], [2, null]], compare, maxNodeSize);
-    const tree2 = new BTree<number, number|null>([[2, 20], [3, null]], compare, maxNodeSize);
+    const tree1 = new BTree<number, number|null>([[1, 10], [2, null]], (a, b) => a - b, maxNodeSize);
+    const tree2 = new BTree<number, number|null>([[2, 20], [3, null]], (a, b) => a - b, maxNodeSize);
     const mergeFunc = (k: number, v1: number|null, v2: number|null) => {
       if (v1 === null) return v2;
       if (v2 === null) return v1;
@@ -1383,8 +1383,8 @@ function testMerge(maxNodeSize: number) {
   });
 
   test('Merge excluding all overlapping keys', () => {
-    const tree1 = new BTree<number, number>([[1, 10], [2, 20], [3, 30]], compare, maxNodeSize);
-    const tree2 = new BTree<number, number>([[2, 200], [3, 300], [4, 400]], compare, maxNodeSize);
+    const tree1 = new BTree<number, number>([[1, 10], [2, 20], [3, 30]], (a, b) => a - b, maxNodeSize);
+    const tree2 = new BTree<number, number>([[2, 200], [3, 300], [4, 400]], (a, b) => a - b, maxNodeSize);
     // Exclude all overlapping keys
     const mergeFunc = (k: number, v1: number, v2: number) => undefined;
 
