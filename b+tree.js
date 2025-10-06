@@ -789,6 +789,20 @@ var BTree = /** @class */ (function () {
         result._size = this._size;
         return result;
     };
+    /**
+     * Merges two BTrees into a new BTree containing the union of all key-value pairs.
+     * @param other The other BTree to merge with this one
+     * @param merge A function called when both trees have entries for the same key.
+     *        It receives (key, thisValue, otherValue) and should return the value to use,
+     *        or undefined to exclude the key from the result.
+     * @returns A new BTree containing the merged entries. Neither input tree is modified.
+     * @description Computational complexity: Expected O(intersections * log size) where
+     *        intersections is the number of key-range overlap points between the trees.
+     */
+    BTree.prototype.merge = function (other, merge) {
+        // TODO: Implement efficient merge algorithm
+        throw new Error('merge() not yet implemented');
+    };
     /** Gets an array filled with the contents of the tree, sorted by key */
     BTree.prototype.toArray = function (maxLength) {
         if (maxLength === void 0) { maxLength = 0x7FFFFFFF; }

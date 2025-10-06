@@ -314,6 +314,17 @@ export default class BTree<K = any, V = any> implements ISortedMapF<K, V>, ISort
      *  @param force Clone all nodes, even shared ones.
      */
     greedyClone(force?: boolean): BTree<K, V>;
+    /**
+     * Merges two BTrees into a new BTree containing the union of all key-value pairs.
+     * @param other The other BTree to merge with this one
+     * @param merge A function called when both trees have entries for the same key.
+     *        It receives (key, thisValue, otherValue) and should return the value to use,
+     *        or undefined to exclude the key from the result.
+     * @returns A new BTree containing the merged entries. Neither input tree is modified.
+     * @description Computational complexity: Expected O(intersections * log size) where
+     *        intersections is the number of key-range overlap points between the trees.
+     */
+    merge(other: BTree<K, V>, merge: (key: K, leftValue: V, rightValue: V) => V | undefined): BTree<K, V>;
     /** Gets an array filled with the contents of the tree, sorted by key */
     toArray(maxLength?: number): [K, V][];
     /** Gets an array of all keys, sorted */

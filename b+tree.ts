@@ -874,8 +874,8 @@ export default class BTree<K=any, V=any> implements ISortedMapF<K,V>, ISortedMap
     return result;
   }
 
-  /** Performs a greedy clone, immediately duplicating any nodes that are 
-   *  not currently marked as shared, in order to avoid marking any 
+  /** Performs a greedy clone, immediately duplicating any nodes that are
+   *  not currently marked as shared, in order to avoid marking any
    *  additional nodes as shared.
    *  @param force Clone all nodes, even shared ones.
    */
@@ -884,6 +884,21 @@ export default class BTree<K=any, V=any> implements ISortedMapF<K,V>, ISortedMap
     result._root = this._root.greedyClone(force);
     result._size = this._size;
     return result;
+  }
+
+  /**
+   * Merges two BTrees into a new BTree containing the union of all key-value pairs.
+   * @param other The other BTree to merge with this one
+   * @param merge A function called when both trees have entries for the same key.
+   *        It receives (key, thisValue, otherValue) and should return the value to use,
+   *        or undefined to exclude the key from the result.
+   * @returns A new BTree containing the merged entries. Neither input tree is modified.
+   * @description Computational complexity: Expected O(intersections * log size) where
+   *        intersections is the number of key-range overlap points between the trees.
+   */
+  merge(other: BTree<K,V>, merge: (key: K, leftValue: V, rightValue: V) => V | undefined): BTree<K,V> {
+    // TODO: Implement efficient merge algorithm
+    throw new Error('merge() not yet implemented');
   }
 
   /** Gets an array filled with the contents of the tree, sorted by key */
