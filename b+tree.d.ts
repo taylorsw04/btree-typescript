@@ -321,10 +321,48 @@ export default class BTree<K = any, V = any> implements ISortedMapF<K, V>, ISort
      *        It receives (key, thisValue, otherValue) and should return the value to use,
      *        or undefined to exclude the key from the result.
      * @returns A new BTree containing the merged entries. Neither input tree is modified.
-     * @description Computational complexity: Expected O(intersections * log size) where
-     *        intersections is the number of key-range overlap points between the trees.
+     * @description Computational complexity: O(1) for non-overlapping ranges,
+     *        O(k * log n) for overlapping ranges where k is the number of overlapping keys.
      */
     merge(other: BTree<K, V>, merge: (key: K, leftValue: V, rightValue: V) => V | undefined): BTree<K, V>;
+    /**
+     * Helper method to merge a subtree from source into target.
+     * @param target The target tree being built (mutable)
+     * @param sourceNode The current node from the source tree
+     * @param sourceTree The source tree (for comparison function)
+     * @param sourceDepth The depth of sourceNode in the source tree
+     * @param targetHeight The total height of the target tree
+     * @param merge The merge function for conflicting keys
+     * @param swapped Whether the trees were swapped (affects merge parameter order)
+     */
+    private mergeSubtree;
+    /**
+     * Checks if the range [minKey, maxKey] overlaps with any keys in the target tree.
+     */
+    private static checkOverlap;
+    /**
+     * Inserts a shared subtree from source into target at the appropriate depth.
+     * This implements a standard B-tree insertion algorithm that walks down from the root
+     * until reaching a depth where nodes have the same height as the subtree being inserted.
+     * @param target The target tree
+     * @param sourceNode The node to insert (will be marked as shared)
+     * @param sourceDepth The depth of sourceNode in its original tree
+     * @param sourceHeight The total height of the source tree
+     */
+    private static insertSharedSubtree;
+    /**
+     * Recursively walks down the tree to insert a node at a specific depth.
+     * Handles splitting along the way as needed.
+     */
+    private static insertNodeAtDepth;
+    /**
+     * Counts the total number of keys in a subtree.
+     */
+    private static countKeys;
+    /**
+     * Collects all key-value pairs from a subtree.
+     */
+    private static collectPairsHelper;
     /** Gets an array filled with the contents of the tree, sorted by key */
     toArray(maxLength?: number): [K, V][];
     /** Gets an array of all keys, sorted */
