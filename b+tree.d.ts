@@ -326,19 +326,14 @@ export default class BTree<K = any, V = any> implements ISortedMapF<K, V>, ISort
      */
     merge(other: BTree<K, V>, merge: (key: K, leftValue: V, rightValue: V) => V | undefined): BTree<K, V>;
     /**
-     * Merges tree B into tree M using a dual cursor walk approach.
-     * This avoids O(N) overlap checks by using cursor position to detect overlaps in O(1).
+     * Merges tree B into tree M using a true dual cursor walk approach.
+     * Both cursors walk in lockstep, using O(1) cursor comparison to detect overlaps.
      * @param target The target tree M (mutable, clone of larger tree)
      * @param source The source tree B (smaller tree to merge in)
      * @param merge The merge function for conflicting keys
      * @param swapped Whether trees were swapped (affects merge parameter order)
      */
     private static mergeDualCursor;
-    /**
-     * Checks if the range [minKey, maxKey] overlaps with any keys in the target tree.
-     * Uses a more efficient check than full tree traversal.
-     */
-    private static rangeOverlaps;
     /**
      * Inserts a shared subtree from source into target at the appropriate depth.
      * This implements a standard B-tree insertion algorithm that walks down from the root

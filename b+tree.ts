@@ -927,8 +927,8 @@ export default class BTree<K=any, V=any> implements ISortedMapF<K,V>, ISortedMap
   }
 
   /**
-   * Merges tree B into tree M using a dual cursor walk approach.
-   * This avoids O(N) overlap checks by using cursor position to detect overlaps in O(1).
+   * Merges tree B into tree M using a true dual cursor walk approach.
+   * Both cursors walk in lockstep, using O(1) cursor comparison to detect overlaps.
    * @param target The target tree M (mutable, clone of larger tree)
    * @param source The source tree B (smaller tree to merge in)
    * @param merge The merge function for conflicting keys
@@ -944,24 +944,61 @@ export default class BTree<K=any, V=any> implements ISortedMapF<K,V>, ISortedMap
     const sourceCursor = BTree.makeDiffCursor(source);
     const cmp = target._compare;
 
-    // Walk source tree in depth-first preorder to detect non-overlapping nodes early
+    let targetSuccess = true;
     let sourceSuccess = true;
-    let sourceDepth = 0;
 
-    while (sourceSuccess) {
+    while (targetSuccess && sourceSuccess) {
+      const cursorOrder = BTree.compare(targetCursor, sourceCursor, cmp);
+      const { leaf: targetLeaf, internalSpine: targetSpine, levelIndices: targetIndices } = targetCursor;
       const { leaf: sourceLeaf, internalSpine: sourceSpine, levelIndices: sourceIndices } = sourceCursor;
 
-      // Get current source node
-      const sourceNodeLevel = sourceSpine.length - 1;
-      const sourceNode = sourceNodeLevel >= 0 ? sourceSpine[sourceNodeLevel][sourceIndices[sourceNodeLevel]] : null;
+      // Check if both cursors are at internal nodes with same maxKey
+      if (!targetLeaf && !sourceLeaf && cursorOrder === 0) {
+        const lastTarget = targetSpine.length - 1;
+        const lastSource = sourceSpine.length - 1;
+        const targetNode = targetSpine[lastTarget][targetIndices[lastTarget]];
+        const sourceNode = sourceSpine[lastSource][sourceIndices[lastSource]];
 
-      if (!sourceNode) break;
+        if (targetNode === sourceNode) {
+          // Already shared! Skip both subtrees
+          targetSuccess = BTree.step(targetCursor, true);
+          sourceSuccess = BTree.step(sourceCursor, true);
+          continue;
+        }
+      }
 
-      // Calculate source node's depth
-      sourceDepth = sourceIndices.length - 1;
+      // Optimization: Check if source node doesn't overlap with entire target tree
+      // This is safe to do by checking against target tree's full range (not just cursor position)
+      if (!sourceLeaf) {
+        const lastSource = sourceSpine.length - 1;
+        const sourceNode = sourceSpine[lastSource][sourceIndices[lastSource]];
+        const sourceMinKey = sourceNode.minKey();
+        const sourceMaxKey = sourceNode.maxKey();
 
+        // Get target tree's full range from root (O(1) for maxKey, O(log n) for minKey)
+        const targetFullMinKey = target._root.minKey();
+        const targetFullMaxKey = target._root.maxKey();
+
+        if (sourceMinKey !== undefined && sourceMaxKey !== undefined &&
+            targetFullMinKey !== undefined && targetFullMaxKey !== undefined) {
+
+          // Check if source node is completely disjoint from target tree
+          const sourceCompletelyBefore = cmp(sourceMaxKey, targetFullMinKey) < 0;
+          const sourceCompletelyAfter = cmp(sourceMinKey, targetFullMaxKey) > 0;
+
+          if (sourceCompletelyBefore || sourceCompletelyAfter) {
+            // Source node doesn't overlap with target at all!
+            const sourceDepth = sourceIndices.length - 1;
+            BTree.insertSharedSubtree(target, sourceNode, sourceDepth, source.height);
+            sourceSuccess = BTree.step(sourceCursor, true);
+            continue;
+          }
+        }
+      }
+
+      // Handle source leaf nodes (overlapping case)
       if (sourceLeaf) {
-        // At leaf - insert keys individually with merge handling
+        // At source leaf - need to merge keys with target
         for (let i = 0; i < sourceLeaf.keys.length; i++) {
           const key = sourceLeaf.keys[i];
           const sourceValue = sourceLeaf.values[i];
@@ -982,52 +1019,45 @@ export default class BTree<K=any, V=any> implements ISortedMapF<K,V>, ISortedMap
             target.set(key, sourceValue);
           }
         }
-        // Move to next node
+        // Move to next source node
         sourceSuccess = BTree.step(sourceCursor, true);
+        continue;
+      }
+
+      // Standard stepping logic: step the cursor that's behind
+      if (cursorOrder < 0) {
+        // Target cursor is behind - step it
+        targetSuccess = BTree.step(targetCursor);
       } else {
-        // At internal node - check for overlap with target
-        const sourceMinKey = sourceNode.minKey();
-        const sourceMaxKey = sourceNode.maxKey();
+        // Source cursor is behind or equal - step it
+        sourceSuccess = BTree.step(sourceCursor);
+      }
+    }
 
-        if (sourceMinKey === undefined || sourceMaxKey === undefined) {
-          sourceSuccess = BTree.step(sourceCursor, true);
-          continue;
-        }
+    // Handle remaining source nodes (they don't overlap with target)
+    if (sourceSuccess) {
+      while (sourceSuccess) {
+        const { leaf: sourceLeaf, internalSpine: sourceSpine, levelIndices: sourceIndices } = sourceCursor;
 
-        // Check if this node overlaps with target using cursor-based range check
-        const hasOverlap = BTree.rangeOverlaps(target, sourceMinKey, sourceMaxKey, cmp);
-
-        if (!hasOverlap) {
-          // Case 1: No overlap - directly reuse this node
-          BTree.insertSharedSubtree(target, sourceNode, sourceDepth, source.height);
-          // Skip this entire subtree since we've inserted it
+        if (sourceLeaf) {
+          // Insert remaining source keys
+          for (let i = 0; i < sourceLeaf.keys.length; i++) {
+            target.set(sourceLeaf.keys[i], sourceLeaf.values[i]);
+          }
           sourceSuccess = BTree.step(sourceCursor, true);
         } else {
-          // Case 2: Has overlap - descend into children
-          sourceSuccess = BTree.step(sourceCursor, false);
+          // Try to insert remaining nodes as shared subtrees
+          const lastSource = sourceSpine.length - 1;
+          const sourceNode = sourceSpine[lastSource][sourceIndices[lastSource]];
+          const sourceDepth = sourceIndices.length - 1;
+
+          BTree.insertSharedSubtree(target, sourceNode, sourceDepth, source.height);
+          sourceSuccess = BTree.step(sourceCursor, true);
         }
       }
     }
   }
 
-  /**
-   * Checks if the range [minKey, maxKey] overlaps with any keys in the target tree.
-   * Uses a more efficient check than full tree traversal.
-   */
-  private static rangeOverlaps<K,V>(target: BTree<K,V>, minKey: K, maxKey: K, cmp: (a: K, b: K) => number): boolean {
-    // Get target's range
-    const targetMinKey = target._root.minKey();
-    const targetMaxKey = target._root.maxKey();
-
-    if (targetMinKey === undefined || targetMaxKey === undefined) {
-      return false; // Target is empty
-    }
-
-    // Check if ranges overlap
-    // Ranges [a,b] and [c,d] overlap if: a <= d AND c <= b
-    // In our case: minKey <= targetMaxKey AND targetMinKey <= maxKey
-    return cmp(minKey, targetMaxKey) <= 0 && cmp(targetMinKey, maxKey) <= 0;
-  }
 
   /**
    * Inserts a shared subtree from source into target at the appropriate depth.
