@@ -458,27 +458,29 @@ console.log("### Merge between B+ trees");
   });
 
   console.log();
-  console.log("# Partial overlap (50% intersection)");
+  console.log("# Partial overlap (10% intersection)");
   sizes.forEach((size) => {
     const tree1 = new BTree();
     const tree2 = new BTree();
 
-    // Tree1: 0-(1.5*size)
-    // Tree2: (0.5*size)-(2*size)
-    // Overlap: (0.5*size)-(1.5*size) = 50% of each tree
-    for (let i = 0; i < Math.floor(size * 1.5); i++) {
+    // Tree1: 0-(size)
+    // Tree2: (~0.9*size)-(1.9*size)
+    // Overlap: last 10% of tree1 and first 10% of tree2
+    for (let i = 0; i < size; i++) {
       tree1.set(i, i);
     }
-    for (let i = Math.floor(size * 0.5); i < size * 2; i++) {
-      tree2.set(i, i * 10);
+    const offset = Math.floor(size * 0.9);
+    for (let i = 0; i < size; i++) {
+      const key = offset + i;
+      tree2.set(key, key * 10);
     }
 
     const preferLeft = (_k: number, v1: number, _v2: number) => v1;
-    measure(() => `Merge trees with 50% overlap (${Math.floor(size*1.5)}+${Math.floor(size*1.5)} keys) using merge()`, () => {
+    measure(() => `Merge trees with 10% overlap (${size}+${size} keys) using merge()`, () => {
       return tree1.merge(tree2, preferLeft);
     });
 
-    measure(() => `Merge trees with 50% overlap (${Math.floor(size*1.5)}+${Math.floor(size*1.5)} keys) using clone+set loop (baseline)`, () => {
+    measure(() => `Merge trees with 10% overlap (${size}+${size} keys) using clone+set loop (baseline)`, () => {
       const result = tree1.clone();
       tree2.forEachPair((k, v) => {
         result.set(k, v, false);

@@ -1479,6 +1479,45 @@ function testMerge(maxNodeSize: number) {
     expect(mergeCalledWith.length).toBe(1);
     expect(mergeCalledWith[0]).toBe(k2);
   });
+
+  if (maxNodeSize === 4) {
+    test('Merge trees with ~10% overlap', () => {
+      const size = 200;
+      const offset = Math.floor(size * 0.9);
+      const overlap = size - offset;
+
+      const tree1 = new BTree<number, number>([], compare, maxNodeSize);
+      const tree2 = new BTree<number, number>([], compare, maxNodeSize);
+
+      for (let i = 0; i < size; i++) {
+        tree1.set(i, i);
+      }
+      for (let i = 0; i < size; i++) {
+        const key = offset + i;
+        tree2.set(key, key * 10);
+      }
+
+      const preferLeft = (_k: number, v1: number, _v2: number) => v1;
+      const result = tree1.merge(tree2, preferLeft);
+
+      expect(result.size).toBe(size + size - overlap);
+      result.checkValid();
+
+      for (let i = 0; i < offset; i++) {
+        expect(result.get(i)).toBe(i);
+      }
+      for (let i = offset; i < size; i++) {
+        expect(result.get(i)).toBe(i);
+      }
+      const upperBound = offset + size;
+      for (let i = size; i < upperBound; i++) {
+        expect(result.get(i)).toBe(i * 10);
+      }
+
+      expect(tree1.size).toBe(size);
+      expect(tree2.size).toBe(size);
+    });
+  }
 }
 
 describe('BTree merge fuzz tests', () => {
