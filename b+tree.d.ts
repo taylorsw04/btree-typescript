@@ -105,7 +105,6 @@ export declare function simpleComparator(a: (number | string)[], b: (number | st
  */
 export default class BTree<K = any, V = any> implements ISortedMapF<K, V>, ISortedMap<K, V> {
     private _root;
-    _size: number;
     _maxNodeSize: number;
     /**
      * provides a total order over keys (and a strict partial order over the type K)
@@ -316,13 +315,6 @@ export default class BTree<K = any, V = any> implements ISortedMapF<K, V>, ISort
     greedyClone(force?: boolean): BTree<K, V>;
     /**
      * Merges this tree with `other`, reusing subtrees wherever possible.
-     * The merge follows the documented specification:
-     *  - Clone the deeper tree (A) to produce the mutable result M.
-     *  - Walk B, collecting candidate subtrees keyed by their disjoint [min,max] ranges.
-     *  - Recursively traverse M, exploding candidates that overlap node endpoints until only
-     *    disjoint, height-compatible subtrees remain in the candidate set.
-     *  - Reuse the surviving candidates with subtree sharing; leaves that cannot be shared
-     *    are merged key-by-key using the supplied callback.
      * Neither input tree is modified.
      * @param other The other tree to merge into this one.
      * @param merge Called for keys that appear in both trees. Return the desired value, or
@@ -352,10 +344,6 @@ export default class BTree<K = any, V = any> implements ISortedMapF<K, V>, ISort
      *  - a new `BNode` if `currentNode` split and produced a right sibling.
      */
     private static insertNodeAtDepth;
-    /**
-     * Counts the total number of keys in a subtree.
-     */
-    private static countKeys;
     /**
      * Collects all key-value pairs from a subtree.
      */
@@ -498,8 +486,8 @@ export default class BTree<K = any, V = any> implements ISortedMapF<K, V>, ISort
     /** Scans the tree for signs of serious bugs (e.g. this.size doesn't match
      *  number of elements, internal nodes not caching max element properly...)
      *  Computational complexity: O(number of nodes), i.e. O(size). This method
-     *  skips the most expensive test - whether all keys are sorted - but it
-     *  does check that maxKey() of the children of internal nodes are sorted. */
+    *  skips the most expensive test - whether all keys are sorted - but it
+    *  does check that maxKey() of the children of internal nodes are sorted. */
     checkValid(): void;
 }
 /** A TypeScript helper function that simply returns its argument, typed as
