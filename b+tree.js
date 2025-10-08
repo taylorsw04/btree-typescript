@@ -800,143 +800,146 @@ var BTree = /** @class */ (function () {
      *        O(k * log n) for overlapping ranges where k is the number of overlapping keys.
      */
     BTree.prototype.merge = function (other, merge) {
-        if (other._compare !== this._compare) {
-            throw new Error("Tree comparators are not the same.");
-        }
-        // Handle empty tree cases efficiently
-        if (this.isEmpty && other.isEmpty) {
-            return new BTree(undefined, this._compare, this._maxNodeSize);
-        }
-        if (this.isEmpty) {
+        // Fast paths for empty trees
+        if (this._size === 0)
             return other.clone();
-        }
-        if (other.isEmpty) {
+        if (other._size === 0)
             return this.clone();
+        // Ensure both trees share the same comparator reference
+        if (this._compare !== other._compare)
+            throw new Error("Cannot merge BTrees with different comparators.");
+        // Pick deeper (and then larger) tree as source of the clone
+        var heightThis = this.height;
+        var heightOther = other.height;
+        var treeA = this;
+        var treeB = other;
+        if (heightThis < heightOther || (heightThis === heightOther && this._size < other._size)) {
+            treeA = other;
+            treeB = this;
         }
-        // Select the larger/deeper tree as the base
-        var A = this._size >= other._size ? this : other;
-        var B = this._size >= other._size ? other : this;
-        var swapped = A !== this;
-        // Clone A to create the result tree M
-        var M = A.clone();
-        // Perform optimized merge using dual cursor walk
-        BTree.mergeDualCursor(M, B, merge, swapped);
-        return M;
-    };
-    /**
-     * Merges tree B into tree M using a true dual cursor walk approach.
-     * Both cursors walk in lockstep, using O(1) cursor comparison to detect overlaps.
-     * @param target The target tree M (mutable, clone of larger tree)
-     * @param source The source tree B (smaller tree to merge in)
-     * @param merge The merge function for conflicting keys
-     * @param swapped Whether trees were swapped (affects merge parameter order)
-     */
-    BTree.mergeDualCursor = function (target, source, merge, swapped) {
-        var targetCursor = BTree.makeDiffCursor(target);
-        var sourceCursor = BTree.makeDiffCursor(source);
-        var cmp = target._compare;
-        var targetSuccess = true;
-        var sourceSuccess = true;
-        while (targetSuccess && sourceSuccess) {
-            var cursorOrder = BTree.compare(targetCursor, sourceCursor, cmp);
-            var targetLeaf = targetCursor.leaf, targetSpine = targetCursor.internalSpine, targetIndices = targetCursor.levelIndices;
-            var sourceLeaf = sourceCursor.leaf, sourceSpine = sourceCursor.internalSpine, sourceIndices = sourceCursor.levelIndices;
-            // Check if both cursors are at internal nodes with same maxKey
-            if (!targetLeaf && !sourceLeaf && cursorOrder === 0) {
-                var lastTarget = targetSpine.length - 1;
-                var lastSource = sourceSpine.length - 1;
-                var targetNode = targetSpine[lastTarget][targetIndices[lastTarget]];
-                var sourceNode = sourceSpine[lastSource][sourceIndices[lastSource]];
-                if (targetNode === sourceNode) {
-                    // Already shared! Skip both subtrees
-                    targetSuccess = BTree.step(targetCursor, true);
-                    sourceSuccess = BTree.step(sourceCursor, true);
-                    continue;
-                }
+        var swapped = treeA !== this;
+        var result = treeA.clone();
+        // After cloning, treeB might still be empty due to clone side-effects
+        if (treeB._size === 0)
+            return result;
+        var cmp = this._compare;
+        var sourceHeight = treeB.height;
+        // Comparator for disjoint range keys
+        var compareRanges = function (a, b) {
+            if (cmp(a.max, b.min) < 0)
+                return -1;
+            if (cmp(a.min, b.max) > 0)
+                return 1;
+            return 0;
+        };
+        var candidateSet = new BTree(undefined, compareRanges, treeB._maxNodeSize);
+        var toMerge = [];
+        var addCandidate = function (node, depth) {
+            var min = node.minKey();
+            var max = node.maxKey();
+            if (min === undefined || max === undefined)
+                return;
+            var range = { min: min, max: max };
+            candidateSet.set(range, { node: node, depth: depth, range: range });
+        };
+        addCandidate(treeB._root, 0);
+        if (candidateSet.isEmpty)
+            return result;
+        var keyQuery = { min: treeB._root.minKey(), max: treeB._root.minKey() };
+        var lowRange = { min: keyQuery.min, max: keyQuery.min };
+        var highRange = { min: keyQuery.min, max: keyQuery.min };
+        var explodeCandidate = function (entry) {
+            candidateSet.delete(entry.range);
+            var node = entry.node;
+            if (node.isLeaf) {
+                toMerge.push(entry);
+                return;
             }
-            // Optimization: Check if source node doesn't overlap with entire target tree
-            // This is safe to do by checking against target tree's full range (not just cursor position)
-            if (!sourceLeaf) {
-                var lastSource = sourceSpine.length - 1;
-                var sourceNode = sourceSpine[lastSource][sourceIndices[lastSource]];
-                var sourceMinKey = sourceNode.minKey();
-                var sourceMaxKey = sourceNode.maxKey();
-                // Get target tree's full range from root (O(1) for maxKey, O(log n) for minKey)
-                var targetFullMinKey = target._root.minKey();
-                var targetFullMaxKey = target._root.maxKey();
-                if (sourceMinKey !== undefined && sourceMaxKey !== undefined &&
-                    targetFullMinKey !== undefined && targetFullMaxKey !== undefined) {
-                    // Check if source node is completely disjoint from target tree
-                    var sourceCompletelyBefore = cmp(sourceMaxKey, targetFullMinKey) < 0;
-                    var sourceCompletelyAfter = cmp(sourceMinKey, targetFullMaxKey) > 0;
-                    if (sourceCompletelyBefore || sourceCompletelyAfter) {
-                        // Source node doesn't overlap with target at all!
-                        var sourceDepth = sourceIndices.length - 1;
-                        BTree.insertSharedSubtree(target, sourceNode, sourceDepth, source.height);
-                        sourceSuccess = BTree.step(sourceCursor, true);
-                        continue;
-                    }
-                }
+            var internal = node;
+            var nextDepth = entry.depth + 1;
+            for (var i = 0; i < internal.children.length; i++) {
+                addCandidate(internal.children[i], nextDepth);
             }
-            // Handle source leaf nodes (overlapping case)
-            if (sourceLeaf) {
-                // At source leaf - need to merge keys with target
-                for (var i = 0; i < sourceLeaf.keys.length; i++) {
-                    var key = sourceLeaf.keys[i];
-                    var sourceValue = sourceLeaf.values[i];
-                    var existingValue = target.get(key);
-                    if (existingValue !== undefined) {
-                        // Key exists in both trees - call merge function
-                        var mergedValue = swapped
-                            ? merge(key, sourceValue, existingValue)
-                            : merge(key, existingValue, sourceValue);
-                        if (mergedValue !== undefined) {
-                            target.set(key, mergedValue, true);
-                        }
-                        else {
-                            target.delete(key);
-                        }
+        };
+        var explodeOverlaps = function (key) {
+            if (key === undefined || candidateSet.isEmpty)
+                return;
+            keyQuery.min = key;
+            keyQuery.max = key;
+            for (var entry = candidateSet.get(keyQuery); entry; entry = candidateSet.get(keyQuery))
+                explodeCandidate(entry);
+        };
+        var hasEnclosedCandidate = function (minKey, maxKey) {
+            if (candidateSet.isEmpty || minKey === undefined || maxKey === undefined)
+                return false;
+            lowRange.min = minKey;
+            lowRange.max = minKey;
+            highRange.min = maxKey;
+            highRange.max = maxKey;
+            var enclosedPairs = candidateSet.getRange(lowRange, highRange, true);
+            for (var i = 0; i < enclosedPairs.length; i++) {
+                var range = enclosedPairs[i][0];
+                if (cmp(range.min, minKey) >= 0 && cmp(range.max, maxKey) <= 0)
+                    return true;
+            }
+            return false;
+        };
+        var processSource = function (currentNode, depth) {
+            if (candidateSet.isEmpty)
+                return;
+            var minKey = currentNode.minKey();
+            explodeOverlaps(minKey);
+            var keys = currentNode.keys;
+            for (var i = 0; i < keys.length; i++)
+                explodeOverlaps(keys[i]);
+            if (candidateSet.isEmpty || currentNode.isLeaf)
+                return;
+            var maxKey = currentNode.maxKey();
+            if (!hasEnclosedCandidate(minKey, maxKey))
+                return;
+            var internal = currentNode;
+            var nextDepth = depth + 1;
+            for (var i = 0; i < internal.children.length; i++)
+                processSource(internal.children[i], nextDepth);
+        };
+        processSource(result._root, 0);
+        var reusableEntries = [];
+        if (!candidateSet.isEmpty) {
+            candidateSet.forEachPair(function (range, entry) {
+                reusableEntries.push(entry);
+            });
+        }
+        for (var i = 0; i < reusableEntries.length; i++) {
+            var entry = reusableEntries[i];
+            BTree.insertSharedSubtree(result, entry.node, entry.depth, sourceHeight);
+        }
+        var existingPairBuffer = [undefined, undefined];
+        for (var i = 0; i < toMerge.length; i++) {
+            var entry = toMerge[i];
+            var leaf = entry.node;
+            var values = leaf.values;
+            for (var j = 0; j < leaf.keys.length; j++) {
+                var key = leaf.keys[j];
+                var leafValue = values === undefVals ? undefined : values[j];
+                var existingPair = result.getPairOrNextLower(key, existingPairBuffer);
+                if (existingPair !== undefined && cmp(existingPair[0], key) === 0) {
+                    var existingValue = existingPair[1];
+                    var leftValue = swapped ? leafValue : existingValue;
+                    var rightValue = swapped ? existingValue : leafValue;
+                    var mergedValue = merge(key, leftValue, rightValue);
+                    if (mergedValue !== undefined) {
+                        result.set(key, mergedValue, true);
                     }
                     else {
-                        // Key only in source tree
-                        target.set(key, sourceValue);
+                        result.delete(key);
                     }
-                }
-                // Move to next source node
-                sourceSuccess = BTree.step(sourceCursor, true);
-                continue;
-            }
-            // Standard stepping logic: step the cursor that's behind
-            if (cursorOrder < 0) {
-                // Target cursor is behind - step it
-                targetSuccess = BTree.step(targetCursor);
-            }
-            else {
-                // Source cursor is behind or equal - step it
-                sourceSuccess = BTree.step(sourceCursor);
-            }
-        }
-        // Handle remaining source nodes (they don't overlap with target)
-        if (sourceSuccess) {
-            while (sourceSuccess) {
-                var sourceLeaf = sourceCursor.leaf, sourceSpine = sourceCursor.internalSpine, sourceIndices = sourceCursor.levelIndices;
-                if (sourceLeaf) {
-                    // Insert remaining source keys
-                    for (var i = 0; i < sourceLeaf.keys.length; i++) {
-                        target.set(sourceLeaf.keys[i], sourceLeaf.values[i]);
-                    }
-                    sourceSuccess = BTree.step(sourceCursor, true);
                 }
                 else {
-                    // Try to insert remaining nodes as shared subtrees
-                    var lastSource = sourceSpine.length - 1;
-                    var sourceNode = sourceSpine[lastSource][sourceIndices[lastSource]];
-                    var sourceDepth = sourceIndices.length - 1;
-                    BTree.insertSharedSubtree(target, sourceNode, sourceDepth, source.height);
-                    sourceSuccess = BTree.step(sourceCursor, true);
+                    result.set(key, leafValue, true);
                 }
             }
         }
+        return result;
     };
     /**
      * Inserts a shared subtree from source into target at the appropriate depth.
@@ -948,6 +951,7 @@ var BTree = /** @class */ (function () {
      * @param sourceHeight The total height of the source tree
      */
     BTree.insertSharedSubtree = function (target, sourceNode, sourceDepth, sourceHeight) {
+        var originalShared = sourceNode.isShared;
         // Mark the node as shared since we're reusing it
         sourceNode.isShared = true;
         // Calculate the height of the subtree rooted at sourceNode
@@ -1018,8 +1022,17 @@ var BTree = /** @class */ (function () {
             }
             // Walk down and insert at target depth
             var result = BTree.insertNodeAtDepth(target, target._root, sourceNode, targetDepth, 0);
+            if (result === false) {
+                sourceNode.isShared = originalShared;
+                var pairs_1 = [];
+                BTree.collectPairsHelper(sourceNode, pairs_1);
+                for (var i = 0; i < pairs_1.length; i++) {
+                    target.set(pairs_1[i][0], pairs_1[i][1]);
+                }
+                return;
+            }
             // Handle root split
-            if (result !== true && result !== false) {
+            if (result !== true) {
                 target._root = new BNodeInternal([target._root, result]);
             }
             target._size += BTree.countKeys(sourceNode);
@@ -1027,6 +1040,7 @@ var BTree = /** @class */ (function () {
         }
         // Fall back: subtreeHeight is 0 (leaf node) or interleaved case
         // Insert keys individually
+        sourceNode.isShared = originalShared;
         var pairs = [];
         BTree.collectPairsHelper(sourceNode, pairs);
         for (var i = 0; i < pairs.length; i++) {
@@ -1048,6 +1062,9 @@ var BTree = /** @class */ (function () {
             var internal = currentNode;
             var insertKey = nodeToInsert.maxKey();
             var i = internal.indexOf(insertKey, 0, tree._compare);
+            var children = internal.children;
+            if (children.length > 0 && children[0].isLeaf !== nodeToInsert.isLeaf)
+                return false;
             // Insert the child at position i
             if (internal.keys.length < tree._maxNodeSize) {
                 internal.insert(i, nodeToInsert);
@@ -1079,28 +1096,28 @@ var BTree = /** @class */ (function () {
             }
             // Recurse
             var result = BTree.insertNodeAtDepth(tree, child, nodeToInsert, targetDepth, currentDepth + 1);
-            if (result === true || result === false) {
+            if (result === false)
+                return false;
+            if (result === true) {
                 // No split, just update max key
                 internal.keys[i] = child.maxKey();
-                return result;
+                return true;
+            }
+            // Child split, need to insert the new sibling
+            var newSibling = result;
+            internal.keys[i] = child.maxKey();
+            if (internal.keys.length < tree._maxNodeSize) {
+                internal.insert(i + 1, newSibling);
+                return true;
             }
             else {
-                // Child split, need to insert the new sibling
-                var newSibling = result;
-                internal.keys[i] = child.maxKey();
-                if (internal.keys.length < tree._maxNodeSize) {
-                    internal.insert(i + 1, newSibling);
-                    return true;
-                }
-                else {
-                    // This node is also full, split it
-                    var newRight = internal.splitOffRightSide();
-                    var siblingKey = newSibling.maxKey();
-                    var target = tree._compare(siblingKey, internal.maxKey()) > 0 ? newRight : internal;
-                    var newI = target === newRight ? (i + 1) - internal.keys.length : i + 1;
-                    target.insert(newI, newSibling);
-                    return newRight;
-                }
+                // This node is also full, split it
+                var newRight = internal.splitOffRightSide();
+                var siblingKey = newSibling.maxKey();
+                var target = tree._compare(siblingKey, internal.maxKey()) > 0 ? newRight : internal;
+                var newI = target === newRight ? (i + 1) - internal.keys.length : i + 1;
+                target.insert(newI, newSibling);
+                return newRight;
             }
         }
     };
