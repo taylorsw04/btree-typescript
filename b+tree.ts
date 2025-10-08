@@ -1091,41 +1091,7 @@ export default class BTree<K=any, V=any> implements ISortedMapF<K,V>, ISortedMap
     const targetHeight = target.height;
     const cmp = target._compare;
 
-    // Case 1: subtreeHeight > targetHeight
-    // The subtree is taller than the entire target tree
-    // We need to build up the target tree by adding layers
-    if (subtreeHeight > targetHeight) {
-      const sourceMinKey = sourceNode.minKey()!;
-      const sourceMaxKey = sourceNode.maxKey()!;
-      const targetMinKey = target._root.minKey()!;
-      const targetMaxKey = target._root.maxKey()!;
-
-      // Check if source is entirely before or after target
-      const sourceBeforeTarget = cmp(sourceMaxKey, targetMinKey) < 0;
-      const sourceAfterTarget = cmp(sourceMinKey, targetMaxKey) > 0;
-
-      if (sourceBeforeTarget || sourceAfterTarget) {
-        // Build up target tree to match source height by wrapping in internal nodes
-        let currentRoot = target._root;
-        let currentHeight = targetHeight;
-
-        while (currentHeight < subtreeHeight) {
-          // Wrap current root in a single-child internal node
-          currentRoot = new BNodeInternal<K,V>([currentRoot]);
-          currentHeight++;
-        }
-
-        // Now they're at the same height, combine them
-        if (sourceBeforeTarget) {
-          target._root = new BNodeInternal<K,V>([sourceNode, currentRoot]);
-        } else {
-          target._root = new BNodeInternal<K,V>([currentRoot, sourceNode]);
-        }
-        target._size += BTree.countKeys(sourceNode);
-        return;
-      }
-      // If interleaved, fall through to key-by-key insertion
-    }
+    check(subtreeHeight <= targetHeight, "insertSharedSubtree called with taller source subtree");
 
     // Case 2: subtreeHeight === targetHeight
     // Heights match - can create new root combining both

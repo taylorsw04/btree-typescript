@@ -957,38 +957,7 @@ var BTree = /** @class */ (function () {
         var subtreeHeight = sourceHeight - sourceDepth;
         var targetHeight = target.height;
         var cmp = target._compare;
-        // Case 1: subtreeHeight > targetHeight
-        // The subtree is taller than the entire target tree
-        // We need to build up the target tree by adding layers
-        if (subtreeHeight > targetHeight) {
-            var sourceMinKey = sourceNode.minKey();
-            var sourceMaxKey = sourceNode.maxKey();
-            var targetMinKey = target._root.minKey();
-            var targetMaxKey = target._root.maxKey();
-            // Check if source is entirely before or after target
-            var sourceBeforeTarget = cmp(sourceMaxKey, targetMinKey) < 0;
-            var sourceAfterTarget = cmp(sourceMinKey, targetMaxKey) > 0;
-            if (sourceBeforeTarget || sourceAfterTarget) {
-                // Build up target tree to match source height by wrapping in internal nodes
-                var currentRoot = target._root;
-                var currentHeight = targetHeight;
-                while (currentHeight < subtreeHeight) {
-                    // Wrap current root in a single-child internal node
-                    currentRoot = new BNodeInternal([currentRoot]);
-                    currentHeight++;
-                }
-                // Now they're at the same height, combine them
-                if (sourceBeforeTarget) {
-                    target._root = new BNodeInternal([sourceNode, currentRoot]);
-                }
-                else {
-                    target._root = new BNodeInternal([currentRoot, sourceNode]);
-                }
-                target._size += BTree.countKeys(sourceNode);
-                return;
-            }
-            // If interleaved, fall through to key-by-key insertion
-        }
+        check(subtreeHeight <= targetHeight, "insertSharedSubtree called with taller source subtree");
         // Case 2: subtreeHeight === targetHeight
         // Heights match - can create new root combining both
         if (subtreeHeight === targetHeight) {
