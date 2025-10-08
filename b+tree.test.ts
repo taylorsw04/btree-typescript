@@ -1,4 +1,4 @@
-import BTree, {IMap, EmptyBTree, defaultComparator, simpleComparator} from './b+tree';
+import BTree, {IMap, defaultComparator, simpleComparator} from './b+tree';
 import SortedArray from './sorted-array';
 import MersenneTwister from 'mersenne-twister';
 
@@ -1480,3 +1480,111 @@ function testMerge(maxNodeSize: number) {
     expect(mergeCalledWith[0]).toBe(k2);
   });
 }
+
+describe('BTree merge fuzz tests', () => {
+  const compare = (a: number, b: number) => a - b;
+  const branchingFactors = [4, 8, 16, 32];
+  const seeds = [0x12345678, 0x9ABCDEF];
+  const iterationsPerRun = 5;
+
+  const strategies = [
+    {
+      name: 'prefer-left',
+      fn: (k: number, left: number, _right: number) => left,
+      apply: (_k: number, left: number, _right: number) => left
+    },
+    {
+      name: 'prefer-right',
+      fn: (_k: number, _left: number, right: number) => right,
+      apply: (_k: number, _left: number, right: number) => right
+    },
+    {
+      name: 'sum',
+      fn: (_k: number, left: number, right: number) => left + right,
+      apply: (_k: number, left: number, right: number) => left + right
+    },
+    {
+      name: 'min',
+      fn: (_k: number, left: number, right: number) => Math.min(left, right),
+      apply: (_k: number, left: number, right: number) => Math.min(left, right)
+    },
+    {
+      name: 'drop-even-sum',
+      fn: (_k: number, left: number, right: number) => ((left + right) & 1) === 0 ? undefined : right - left,
+      apply: (_k: number, left: number, right: number) => ((left + right) & 1) === 0 ? undefined : right - left
+    }
+  ] as const;
+
+  test('randomized merges across branching factors', () => {
+    jest.setTimeout(60000);
+
+    for (const seedBase of seeds) {
+      for (const maxNodeSize of branchingFactors) {
+        const baseSeed = (seedBase ^ (maxNodeSize * 0x9E3779B1)) >>> 0;
+        const fuzzRand = new MersenneTwister(baseSeed);
+        const nextInt = (limit: number) => {
+          if (limit <= 0)
+            return 0;
+          return Math.floor(fuzzRand.random() * limit);
+        };
+
+        let currentTree = new BTree<number, number>([], compare, maxNodeSize);
+        let currentMap = new Map<number, number>();
+
+        for (let iteration = 0; iteration < iterationsPerRun; iteration++) {
+          const size = nextInt(100000);
+          const otherTree = new BTree<number, number>([], compare, maxNodeSize);
+          const otherMap = new Map<number, number>();
+
+          for (let i = 0; i < size; i++) {
+            const key = nextInt(5_000_000);
+            const value = nextInt(1_000_000);
+            otherTree.set(key, value);
+            otherMap.set(key, value);
+          }
+
+          const strategy = strategies[nextInt(strategies.length)];
+          const mergeFunc = strategy.fn;
+
+          const expectedMap = new Map<number, number>(currentMap);
+
+          otherMap.forEach((rightValue, key) => {
+            if (expectedMap.has(key)) {
+              const leftValue = expectedMap.get(key)!;
+              const mergedValue = strategy.apply(key, leftValue, rightValue);
+              if (mergedValue === undefined)
+                expectedMap.delete(key);
+              else
+                expectedMap.set(key, mergedValue);
+            } else {
+              expectedMap.set(key, rightValue);
+            }
+          });
+
+          const previousSnapshot = currentTree.toArray();
+          const merged = currentTree.merge(otherTree, mergeFunc);
+
+          expect(currentTree.toArray()).toEqual(previousSnapshot);
+
+          if ((iteration & 1) === 0) {
+            merged.checkValid();
+          }
+
+          const expectedArray = Array.from(expectedMap.entries()).sort((a, b) => a[0] - b[0]);
+          expect(merged.toArray()).toEqual(expectedArray);
+
+          // Spot-check a few sampled keys for consistency with the Map
+          const sampleCount = Math.min(10, expectedArray.length);
+          for (let s = 0; s < sampleCount; s++) {
+            const sampleIndex = nextInt(expectedArray.length);
+            const [sampleKey, sampleValue] = expectedArray[sampleIndex];
+            expect(merged.get(sampleKey)).toBe(sampleValue);
+          }
+
+          currentTree = merged;
+          currentMap = expectedMap;
+        }
+      }
+    }
+  });
+});
