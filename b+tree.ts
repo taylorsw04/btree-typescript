@@ -934,6 +934,8 @@ export default class BTree<K=any, V=any> implements ISortedMapF<K,V>, ISortedMap
     // Ensure both trees share the same comparator reference
     if (this._compare !== other._compare)
       throw new Error("Cannot merge BTrees with different comparators.");
+    if (this._maxNodeSize !== other._maxNodeSize)
+      throw new Error("Cannot merge BTrees with different max node sizes.");
 
     // Pick deeper (and then larger) tree as source of the clone
     const heightThis = this.height;

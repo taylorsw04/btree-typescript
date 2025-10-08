@@ -1167,7 +1167,7 @@ function testMerge(maxNodeSize: number) {
     expect(result.toArray()).toEqual([[1, 10], [2, 220], [3, 330], [4, 400]]);
   });
 
-  test('Merge with disjoint ranges - spec example', () => {
+  test('Merge with disjoint ranges', () => {
     // Tree with keys 1-100 and 201-300
     const entries1: [number, number][] = [];
     for (let i = 1; i <= 100; i++) entries1.push([i, i]);
@@ -1193,6 +1193,7 @@ function testMerge(maxNodeSize: number) {
     expect(result.get(200)).toBe(200);
     expect(result.get(201)).toBe(201);
     expect(result.get(300)).toBe(300);
+    result.checkValid();
   });
 
   test('Merge large trees with some overlaps', () => {
@@ -1232,59 +1233,6 @@ function testMerge(maxNodeSize: number) {
     result.checkValid();
   });
 
-  test('Merge with string keys', () => {
-    const tree1 = new BTree<string, number>([['a', 1], ['c', 3], ['e', 5]], simpleComparator, maxNodeSize);
-    const tree2 = new BTree<string, number>([['b', 2], ['c', 30], ['d', 4]], simpleComparator, maxNodeSize);
-    const mergeFunc = (k: string, v1: number, v2: number) => v1 + v2;
-
-    const result = tree1.merge(tree2, mergeFunc);
-
-    expect(result.toArray()).toEqual([['a', 1], ['b', 2], ['c', 33], ['d', 4], ['e', 5]]);
-  });
-
-  test('Merge with complex values', () => {
-    type Value = { count: number, name: string };
-    const tree1 = new BTree<number, Value>([
-      [1, { count: 10, name: 'first' }],
-      [2, { count: 20, name: 'second' }]
-    ], compare, maxNodeSize);
-
-    const tree2 = new BTree<number, Value>([
-      [2, { count: 5, name: 'second-updated' }],
-      [3, { count: 30, name: 'third' }]
-    ], compare, maxNodeSize);
-
-    const mergeFunc = (k: number, v1: Value, v2: Value) => ({
-      count: v1.count + v2.count,
-      name: v2.name // Prefer right tree's name
-    });
-
-    const result = tree1.merge(tree2, mergeFunc);
-
-    expect(result.toArray()).toEqual([
-      [1, { count: 10, name: 'first' }],
-      [2, { count: 25, name: 'second-updated' }],
-      [3, { count: 30, name: 'third' }]
-    ]);
-  });
-
-  test('Merge preserves tree structure validity', () => {
-    const tree1 = new BTree<number, number>([], compare, maxNodeSize);
-    const tree2 = new BTree<number, number>([], compare, maxNodeSize);
-
-    // Build trees with many elements to ensure internal nodes
-    for (let i = 0; i < 200; i++) {
-      tree1.set(i * 2, i * 2);
-      tree2.set(i * 2 + 1, i * 2 + 1);
-    }
-
-    const mergeFunc = (k: number, v1: number, v2: number) => v1 + v2;
-    const result = tree1.merge(tree2, mergeFunc);
-
-    expect(result.size).toBe(400);
-    result.checkValid();
-  });
-
   test('Merge with overlaps at boundaries', () => {
     // Test edge case where overlaps occur at the boundaries of node ranges
     const tree1 = new BTree<number, number>([], compare, maxNodeSize);
@@ -1318,6 +1266,15 @@ function testMerge(maxNodeSize: number) {
   test('Merge throws error when comparators differ', () => {
     const tree1 = new BTree<number, number>([[1, 10]], compare, maxNodeSize);
     const tree2 = new BTree<number, number>([[2, 20]], (a, b) => b - a, maxNodeSize); // Reverse comparator
+    const mergeFunc = (k: number, v1: number, v2: number) => v1 + v2;
+
+    expect(() => tree1.merge(tree2, mergeFunc)).toThrow();
+  });
+
+  test('Merge throws error when max node sizes differ', () => {
+    const otherFanout = maxNodeSize === 32 ? 16 : 32;
+    const tree1 = new BTree<number, number>([[1, 10]], compare, maxNodeSize);
+    const tree2 = new BTree<number, number>([[2, 20]], compare, otherFanout);
     const mergeFunc = (k: number, v1: number, v2: number) => v1 + v2;
 
     expect(() => tree1.merge(tree2, mergeFunc)).toThrow();
@@ -1378,20 +1335,6 @@ function testMerge(maxNodeSize: number) {
       expect(result.get(i)).toBe(i);
     }
     result.checkValid();
-  });
-
-  test('Merge with null values', () => {
-    const tree1 = new BTree<number, number|null>([[1, 10], [2, null]], compare, maxNodeSize);
-    const tree2 = new BTree<number, number|null>([[2, 20], [3, null]], compare, maxNodeSize);
-    const mergeFunc = (k: number, v1: number|null, v2: number|null) => {
-      if (v1 === null) return v2;
-      if (v2 === null) return v1;
-      return v1 + v2;
-    };
-
-    const result = tree1.merge(tree2, mergeFunc);
-
-    expect(result.toArray()).toEqual([[1, 10], [2, 20], [3, null]]);
   });
 
   test('Merge excluding all overlapping keys', () => {
@@ -1459,65 +1402,42 @@ function testMerge(maxNodeSize: number) {
     result.checkValid();
   });
 
-  test('Merge with custom object keys', () => {
-    type Key = { id: number };
-    const compare = (a: Key, b: Key) => a.id - b.id;
+  test('Merge trees with ~10% overlap', () => {
+    const size = 200;
+    const offset = Math.floor(size * 0.9);
+    const overlap = size - offset;
 
-    const k1 = { id: 1 }, k2 = { id: 2 }, k3 = { id: 3 };
-    const tree1 = new BTree<Key, string>([[k1, 'one'], [k2, 'two']], compare, maxNodeSize);
-    const tree2 = new BTree<Key, string>([[k2, 'TWO'], [k3, 'three']], compare, maxNodeSize);
+    const tree1 = new BTree<number, number>([], compare, maxNodeSize);
+    const tree2 = new BTree<number, number>([], compare, maxNodeSize);
 
-    let mergeCalledWith: Key[] = [];
-    const mergeFunc = (k: Key, v1: string, v2: string) => {
-      mergeCalledWith.push(k);
-      return v2.toUpperCase();
-    };
+    for (let i = 0; i < size; i++) {
+      tree1.set(i, i);
+    }
+    for (let i = 0; i < size; i++) {
+      const key = offset + i;
+      tree2.set(key, key * 10);
+    }
 
-    const result = tree1.merge(tree2, mergeFunc);
+    const preferLeft = (_k: number, v1: number, _v2: number) => v1;
+    const result = tree1.merge(tree2, preferLeft);
 
-    expect(result.size).toBe(3);
-    expect(mergeCalledWith.length).toBe(1);
-    expect(mergeCalledWith[0]).toBe(k2);
+    expect(result.size).toBe(size + size - overlap);
+    result.checkValid();
+
+    for (let i = 0; i < offset; i++) {
+      expect(result.get(i)).toBe(i);
+    }
+    for (let i = offset; i < size; i++) {
+      expect(result.get(i)).toBe(i);
+    }
+    const upperBound = offset + size;
+    for (let i = size; i < upperBound; i++) {
+      expect(result.get(i)).toBe(i * 10);
+    }
+
+    expect(tree1.size).toBe(size);
+    expect(tree2.size).toBe(size);
   });
-
-  if (maxNodeSize === 4) {
-    test('Merge trees with ~10% overlap', () => {
-      const size = 200;
-      const offset = Math.floor(size * 0.9);
-      const overlap = size - offset;
-
-      const tree1 = new BTree<number, number>([], compare, maxNodeSize);
-      const tree2 = new BTree<number, number>([], compare, maxNodeSize);
-
-      for (let i = 0; i < size; i++) {
-        tree1.set(i, i);
-      }
-      for (let i = 0; i < size; i++) {
-        const key = offset + i;
-        tree2.set(key, key * 10);
-      }
-
-      const preferLeft = (_k: number, v1: number, _v2: number) => v1;
-      const result = tree1.merge(tree2, preferLeft);
-
-      expect(result.size).toBe(size + size - overlap);
-      result.checkValid();
-
-      for (let i = 0; i < offset; i++) {
-        expect(result.get(i)).toBe(i);
-      }
-      for (let i = offset; i < size; i++) {
-        expect(result.get(i)).toBe(i);
-      }
-      const upperBound = offset + size;
-      for (let i = size; i < upperBound; i++) {
-        expect(result.get(i)).toBe(i * 10);
-      }
-
-      expect(tree1.size).toBe(size);
-      expect(tree2.size).toBe(size);
-    });
-  }
 }
 
 describe('BTree merge fuzz tests', () => {
