@@ -1637,16 +1637,16 @@ class BNode<K,V> {
   // If this is an internal node, _keys[i] is the highest key in children[i].
   keys: K[];
   values: V[];
-  // Encodes subtree size and sharedness. Absolute value is the number of keys in this
-  // node's subtree. Negative (including -0) indicates the node is shared.
+  // Encodes subtree size and sharedness. Absolute value minus one is the number of keys in this
+  // node's subtree. Negative values indicate the node is shared.
   // If a node is shared, its children must be treated as shared as well.
-  isShared: number;
+  sharedSizeTag: number;
   get isLeaf() { return (this as any).children === undefined; }
   
   constructor(keys: K[] = [], values?: V[]) {
     this.keys = keys;
     this.values = values || undefVals as any[];
-    this.isShared = keys.length;
+    this.sharedSizeTag = keys.length + 1;
   }
 
   ///////////////////////////////////////////////////////////////////////////
@@ -2284,32 +2284,29 @@ class BNodeInternal<K,V> extends BNode<K,V> {
 }
 
 function nodeIsShared<K,V>(node: BNode<K,V>): boolean {
-  const flag = node.isShared;
-  return flag < 0 || (flag === 0 && 1/flag === -Infinity);
-}
-
-function sharedSizeFlag(size: number): number {
-  return size === 0 ? -0 : -size;
+  return node.sharedSizeTag < 0;
 }
 
 function nodeSize<K,V>(node: BNode<K,V>): number {
-  const flag = node.isShared;
-  return Math.abs(flag);
+  return Math.abs(node.sharedSizeTag) - 1;
 }
 
 function setNodeSize<K,V>(node: BNode<K,V>, size: number) {
-  node.isShared = nodeIsShared(node) ? sharedSizeFlag(size) : size;
+  const sign = Math.sign(node.sharedSizeTag) || 1;
+  node.sharedSizeTag = (size + 1) * sign;
 }
 
 function adjustNodeSize<K,V>(node: BNode<K,V>, delta: number) {
   if (delta === 0)
     return;
-  const size = nodeSize(node) + delta;
-  node.isShared = nodeIsShared(node) ? sharedSizeFlag(size) : size;
+  const tag = node.sharedSizeTag;
+  const magnitude = Math.abs(tag) + delta;
+  const sign = Math.sign(tag) || 1;
+  node.sharedSizeTag = magnitude * sign;
 }
 
 function markNodeShared<K,V>(node: BNode<K,V>) {
-  node.isShared = sharedSizeFlag(nodeSize(node));
+  node.sharedSizeTag = -Math.abs(node.sharedSizeTag);
 }
 
 /**

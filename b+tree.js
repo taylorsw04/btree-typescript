@@ -1466,7 +1466,7 @@ var BNode = /** @class */ (function () {
         if (keys === void 0) { keys = []; }
         this.keys = keys;
         this.values = values || undefVals;
-        this.isShared = keys.length;
+        this.sharedSizeTag = keys.length + 1;
     }
     Object.defineProperty(BNode.prototype, "isLeaf", {
         get: function () { return this.children === undefined; },
@@ -2067,30 +2067,25 @@ var BNodeInternal = /** @class */ (function (_super) {
     return BNodeInternal;
 }(BNode));
 function nodeIsShared(node) {
-    var flag = node.isShared;
-    return flag < 0 || (flag === 0 && 1 / flag === -Infinity);
-}
-function sharedSizeFlag(size) {
-    return size === 0 ? -0 : -size;
+    return node.sharedSizeTag < 0;
 }
 function nodeSize(node) {
-    var flag = node.isShared;
-    return Math.abs(flag);
+    return Math.abs(node.sharedSizeTag) - 1;
 }
 function setNodeSize(node, size) {
-    node.isShared = nodeIsShared(node) ? sharedSizeFlag(size) : size;
+    var sign = Math.sign(node.sharedSizeTag) || 1;
+    node.sharedSizeTag = (size + 1) * sign;
 }
 function adjustNodeSize(node, delta) {
     if (delta === 0)
         return;
-    var size = nodeSize(node) + delta;
-    node.isShared = nodeIsShared(node) ? sharedSizeFlag(size) : size;
+    var tag = node.sharedSizeTag;
+    var magnitude = Math.abs(tag) + delta;
+    var sign = Math.sign(tag) || 1;
+    node.sharedSizeTag = magnitude * sign;
 }
 function markNodeShared(node) {
-    node.isShared = sharedSizeFlag(nodeSize(node));
-}
-function markNodeUnshared(node) {
-    node.isShared = nodeSize(node);
+    node.sharedSizeTag = -Math.abs(node.sharedSizeTag);
 }
 // Optimization: this array of `undefined`s is used instead of a normal
 // array of values in nodes where `undefined` is the only value.
