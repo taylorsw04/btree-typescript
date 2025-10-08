@@ -1083,7 +1083,6 @@ export default class BTree<K=any, V=any> implements ISortedMapF<K,V>, ISortedMap
     sourceDepth: number,
     sourceHeight: number
   ): void {
-    const originalShared = sourceNode.isShared;
     // Mark the node as shared since we're reusing it
     sourceNode.isShared = true;
 
@@ -1151,53 +1150,44 @@ export default class BTree<K=any, V=any> implements ISortedMapF<K,V>, ISortedMap
       }
       // If interleaved, fall through to key-by-key insertion
     }
+    const targetDepth = Math.max(0, targetHeight - subtreeHeight - 1);
 
-    // Case 3: subtreeHeight < targetHeight
-    // Walk down target tree to the appropriate depth and insert there
-    if (subtreeHeight < targetHeight && subtreeHeight > 0) {
-      const targetDepth = targetHeight - subtreeHeight;
+    // Clone root if shared
+    if (target._root.isShared) {
+      target._root = target._root.clone();
+    }
 
-      // Clone root if shared
-      if (target._root.isShared) {
-        target._root = target._root.clone();
-      }
+    // Walk down and insert at target depth
+    const result = BTree.insertNodeAtDepth(target, target._root, sourceNode, targetDepth, 0);
 
-      // Walk down and insert at target depth
-      const result = BTree.insertNodeAtDepth(target, target._root, sourceNode, targetDepth, 0);
-
-      if (result === false) {
-        sourceNode.isShared = originalShared;
+    if (result === false) {
+      if (sourceNode.isLeaf) {
         const pairs: [K, V][] = [];
         BTree.collectPairsHelper(sourceNode, pairs);
         for (let i = 0; i < pairs.length; i++) {
           target.set(pairs[i][0], pairs[i][1]);
         }
-        return;
+      } else {
+        const internal = sourceNode as any as BNodeInternal<K,V>;
+        for (let i = 0; i < internal.children.length; i++) {
+          BTree.insertSharedSubtree(target, internal.children[i], sourceDepth + 1, sourceHeight);
+        }
       }
-
-      // Handle root split
-      if (result !== true) {
-        target._root = new BNodeInternal<K,V>([target._root, result]);
-      }
-
-      target._size += BTree.countKeys(sourceNode);
       return;
     }
 
-    // Fall back: subtreeHeight is 0 (leaf node) or interleaved case
-    // Insert keys individually
-    sourceNode.isShared = originalShared;
-    const pairs: [K, V][] = [];
-    BTree.collectPairsHelper(sourceNode, pairs);
-    for (let i = 0; i < pairs.length; i++) {
-      target.set(pairs[i][0], pairs[i][1]);
+    // Handle root split
+    if (result !== true) {
+      target._root = new BNodeInternal<K,V>([target._root, result]);
     }
+
+    target._size += BTree.countKeys(sourceNode);
   }
 
   /**
    * Recursively walks down the tree to insert a node at a specific depth.
    * Handles splitting along the way as needed.
-   * @returns true if successful, false if failed, or a BNode if the current node split
+   * @returns true if successful, false if the subtree must be decomposed further, or a BNode if the current node split
    */
   private static insertNodeAtDepth<K,V>(
     tree: BTree<K,V>,
@@ -1205,7 +1195,7 @@ export default class BTree<K=any, V=any> implements ISortedMapF<K,V>, ISortedMap
     nodeToInsert: BNode<K,V>,
     targetDepth: number,
     currentDepth: number
-  ): BNode<K,V> | boolean {
+  ): BNode<K,V> | true | false {
     // Validate we're not trying to insert into a leaf
     if (currentDepth === targetDepth && currentNode.isLeaf) {
       throw new Error(`Cannot insert node at depth ${targetDepth} - reached leaf at depth ${currentDepth}`);
@@ -1217,8 +1207,20 @@ export default class BTree<K=any, V=any> implements ISortedMapF<K,V>, ISortedMap
       const insertKey = nodeToInsert.maxKey()!;
       const i = internal.indexOf(insertKey, 0, tree._compare);
       const children = internal.children;
-      if (children.length > 0 && children[0].isLeaf !== nodeToInsert.isLeaf)
-        return false;
+      const minKey = nodeToInsert.minKey()!;
+      if (i > 0) {
+        const prevChild = children[i - 1];
+        if (tree._compare(prevChild.maxKey(), minKey) >= 0)
+          return false;
+      }
+      if (i < children.length) {
+        const nextChild = children[i];
+        const nextMin = nextChild.minKey();
+        if (nextMin !== undefined && tree._compare(insertKey, nextMin) >= 0)
+          return false;
+      }
+      if (children.length > 0)
+        check(children[0].isLeaf === nodeToInsert.isLeaf, "Cannot mix leaf and internal children when inserting shared subtree");
 
       // Insert the child at position i
       if (internal.keys.length < tree._maxNodeSize) {
@@ -1227,11 +1229,13 @@ export default class BTree<K=any, V=any> implements ISortedMapF<K,V>, ISortedMap
       } else {
         // Node is full, need to split
         const newRight = internal.splitOffRightSide() as BNodeInternal<K,V>;
-        // Determine which node (left or right after split) should receive the new child
-        const target: BNodeInternal<K,V> = tree._compare(insertKey, internal.maxKey()) > 0 ? newRight : internal;
-        // Recalculate index for the target node
-        const newI = target === newRight ? i - internal.keys.length : i;
-        target.insert(newI, nodeToInsert);
+        const insertionIndex = i;
+        const leftSize = internal.keys.length;
+        if (insertionIndex <= leftSize) {
+          internal.insert(insertionIndex, nodeToInsert);
+        } else {
+          newRight.insert(insertionIndex - leftSize, nodeToInsert);
+        }
         return newRight;
       }
     } else {
@@ -1253,13 +1257,13 @@ export default class BTree<K=any, V=any> implements ISortedMapF<K,V>, ISortedMap
       // Recurse
       const result = BTree.insertNodeAtDepth(tree, child, nodeToInsert, targetDepth, currentDepth + 1);
 
-      if (result === false)
-        return false;
       if (result === true) {
         // No split, just update max key
         internal.keys[i] = child.maxKey();
         return true;
       }
+      if (result === false)
+        return false;
 
       // Child split, need to insert the new sibling
       const newSibling = result;
@@ -1271,10 +1275,13 @@ export default class BTree<K=any, V=any> implements ISortedMapF<K,V>, ISortedMap
       } else {
         // This node is also full, split it
         const newRight = internal.splitOffRightSide() as BNodeInternal<K,V>;
-        const siblingKey = newSibling.maxKey();
-        const target: BNodeInternal<K,V> = tree._compare(siblingKey, internal.maxKey()) > 0 ? newRight as BNodeInternal<K,V> : internal;
-        const newI = target === newRight ? (i + 1) - internal.keys.length : i + 1;
-        target.insert(newI, newSibling);
+        const insertionIndex = i + 1;
+        const leftSize = internal.keys.length;
+        if (insertionIndex <= leftSize) {
+          internal.insert(insertionIndex, newSibling);
+        } else {
+          newRight.insert(insertionIndex - leftSize, newSibling);
+        }
         return newRight;
       }
     }

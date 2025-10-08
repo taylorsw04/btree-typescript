@@ -951,7 +951,6 @@ var BTree = /** @class */ (function () {
      * @param sourceHeight The total height of the source tree
      */
     BTree.insertSharedSubtree = function (target, sourceNode, sourceDepth, sourceHeight) {
-        var originalShared = sourceNode.isShared;
         // Mark the node as shared since we're reusing it
         sourceNode.isShared = true;
         // Calculate the height of the subtree rooted at sourceNode
@@ -1012,45 +1011,39 @@ var BTree = /** @class */ (function () {
             }
             // If interleaved, fall through to key-by-key insertion
         }
-        // Case 3: subtreeHeight < targetHeight
-        // Walk down target tree to the appropriate depth and insert there
-        if (subtreeHeight < targetHeight && subtreeHeight > 0) {
-            var targetDepth = targetHeight - subtreeHeight;
-            // Clone root if shared
-            if (target._root.isShared) {
-                target._root = target._root.clone();
-            }
-            // Walk down and insert at target depth
-            var result = BTree.insertNodeAtDepth(target, target._root, sourceNode, targetDepth, 0);
-            if (result === false) {
-                sourceNode.isShared = originalShared;
-                var pairs_1 = [];
-                BTree.collectPairsHelper(sourceNode, pairs_1);
-                for (var i = 0; i < pairs_1.length; i++) {
-                    target.set(pairs_1[i][0], pairs_1[i][1]);
+        var targetDepth = Math.max(0, targetHeight - subtreeHeight - 1);
+        // Clone root if shared
+        if (target._root.isShared) {
+            target._root = target._root.clone();
+        }
+        // Walk down and insert at target depth
+        var result = BTree.insertNodeAtDepth(target, target._root, sourceNode, targetDepth, 0);
+        if (result === false) {
+            if (sourceNode.isLeaf) {
+                var pairs = [];
+                BTree.collectPairsHelper(sourceNode, pairs);
+                for (var i = 0; i < pairs.length; i++) {
+                    target.set(pairs[i][0], pairs[i][1]);
                 }
-                return;
             }
-            // Handle root split
-            if (result !== true) {
-                target._root = new BNodeInternal([target._root, result]);
+            else {
+                var internal = sourceNode;
+                for (var i = 0; i < internal.children.length; i++) {
+                    BTree.insertSharedSubtree(target, internal.children[i], sourceDepth + 1, sourceHeight);
+                }
             }
-            target._size += BTree.countKeys(sourceNode);
             return;
         }
-        // Fall back: subtreeHeight is 0 (leaf node) or interleaved case
-        // Insert keys individually
-        sourceNode.isShared = originalShared;
-        var pairs = [];
-        BTree.collectPairsHelper(sourceNode, pairs);
-        for (var i = 0; i < pairs.length; i++) {
-            target.set(pairs[i][0], pairs[i][1]);
+        // Handle root split
+        if (result !== true) {
+            target._root = new BNodeInternal([target._root, result]);
         }
+        target._size += BTree.countKeys(sourceNode);
     };
     /**
      * Recursively walks down the tree to insert a node at a specific depth.
      * Handles splitting along the way as needed.
-     * @returns true if successful, false if failed, or a BNode if the current node split
+     * @returns true if successful, false if the subtree must be decomposed further, or a BNode if the current node split
      */
     BTree.insertNodeAtDepth = function (tree, currentNode, nodeToInsert, targetDepth, currentDepth) {
         // Validate we're not trying to insert into a leaf
@@ -1063,8 +1056,20 @@ var BTree = /** @class */ (function () {
             var insertKey = nodeToInsert.maxKey();
             var i = internal.indexOf(insertKey, 0, tree._compare);
             var children = internal.children;
-            if (children.length > 0 && children[0].isLeaf !== nodeToInsert.isLeaf)
-                return false;
+            var minKey = nodeToInsert.minKey();
+            if (i > 0) {
+                var prevChild = children[i - 1];
+                if (tree._compare(prevChild.maxKey(), minKey) >= 0)
+                    return false;
+            }
+            if (i < children.length) {
+                var nextChild = children[i];
+                var nextMin = nextChild.minKey();
+                if (nextMin !== undefined && tree._compare(insertKey, nextMin) >= 0)
+                    return false;
+            }
+            if (children.length > 0)
+                check(children[0].isLeaf === nodeToInsert.isLeaf, "Cannot mix leaf and internal children when inserting shared subtree");
             // Insert the child at position i
             if (internal.keys.length < tree._maxNodeSize) {
                 internal.insert(i, nodeToInsert);
@@ -1073,11 +1078,14 @@ var BTree = /** @class */ (function () {
             else {
                 // Node is full, need to split
                 var newRight = internal.splitOffRightSide();
-                // Determine which node (left or right after split) should receive the new child
-                var target = tree._compare(insertKey, internal.maxKey()) > 0 ? newRight : internal;
-                // Recalculate index for the target node
-                var newI = target === newRight ? i - internal.keys.length : i;
-                target.insert(newI, nodeToInsert);
+                var insertionIndex = i;
+                var leftSize = internal.keys.length;
+                if (insertionIndex <= leftSize) {
+                    internal.insert(insertionIndex, nodeToInsert);
+                }
+                else {
+                    newRight.insert(insertionIndex - leftSize, nodeToInsert);
+                }
                 return newRight;
             }
         }
@@ -1096,13 +1104,13 @@ var BTree = /** @class */ (function () {
             }
             // Recurse
             var result = BTree.insertNodeAtDepth(tree, child, nodeToInsert, targetDepth, currentDepth + 1);
-            if (result === false)
-                return false;
             if (result === true) {
                 // No split, just update max key
                 internal.keys[i] = child.maxKey();
                 return true;
             }
+            if (result === false)
+                return false;
             // Child split, need to insert the new sibling
             var newSibling = result;
             internal.keys[i] = child.maxKey();
@@ -1113,10 +1121,14 @@ var BTree = /** @class */ (function () {
             else {
                 // This node is also full, split it
                 var newRight = internal.splitOffRightSide();
-                var siblingKey = newSibling.maxKey();
-                var target = tree._compare(siblingKey, internal.maxKey()) > 0 ? newRight : internal;
-                var newI = target === newRight ? (i + 1) - internal.keys.length : i + 1;
-                target.insert(newI, newSibling);
+                var insertionIndex = i + 1;
+                var leftSize = internal.keys.length;
+                if (insertionIndex <= leftSize) {
+                    internal.insert(insertionIndex, newSibling);
+                }
+                else {
+                    newRight.insert(insertionIndex - leftSize, newSibling);
+                }
                 return newRight;
             }
         }

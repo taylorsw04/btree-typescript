@@ -1016,6 +1016,18 @@ describe('BTree merge tests with fanout 4',  testMerge.bind(null, 4));
 
 function testMerge(maxNodeSize: number) {
   const compare = (a: number, b: number) => a - b;
+  const sharesNode = (root: any, targetNode: any): boolean => {
+    if (root === targetNode)
+      return true;
+    if (root.isLeaf)
+      return false;
+    const children = (root as any).children as any[];
+    for (let i = 0; i < children.length; i++) {
+      if (sharesNode(children[i], targetNode))
+        return true;
+    }
+    return false;
+  };
 
   test('Merge two empty trees', () => {
     const tree1 = new BTree<number, number>([], compare, maxNodeSize);
@@ -1392,6 +1404,59 @@ function testMerge(maxNodeSize: number) {
 
     // Only non-overlapping keys remain
     expect(result.toArray()).toEqual([[1, 10], [4, 400]]);
+  });
+
+  test('Merge reuses appended subtree with minimum fanout', () => {
+    const tree1 = new BTree<number, number>([], compare, maxNodeSize);
+    const tree2 = new BTree<number, number>([], compare, maxNodeSize);
+
+    for (let i = 0; i < 400; i++) {
+      tree1.set(i, i);
+    }
+    for (let i = 400; i < 800; i++) {
+      tree2.set(i, i * 2);
+    }
+
+    const mergeFunc = (k: number, v1: number, v2: number) => {
+      throw new Error('Should not be called for disjoint ranges');
+    };
+
+    const result = tree1.merge(tree2, mergeFunc);
+
+    expect(result.size).toBe(tree1.size + tree2.size);
+    const resultRoot = result['_root'] as any;
+    const tree2Root = tree2['_root'] as any;
+    expect(sharesNode(resultRoot, tree2Root)).toBe(true);
+    result.checkValid();
+  });
+
+  test('Merge with large disjoint ranges', () => {
+    const tree1 = new BTree<number, number>([], compare, maxNodeSize);
+    const tree2 = new BTree<number, number>([], compare, maxNodeSize);
+
+    for (let i = 0; i <= 10000; i++) {
+      tree1.set(i, i);
+    }
+    for (let i = 10001; i <= 20000; i++) {
+      tree2.set(i, i);
+    }
+
+    let mergeCalls = 0;
+    const mergeFunc = (k: number, v1: number, v2: number) => {
+      mergeCalls++;
+      return v1 + v2;
+    };
+
+    const result = tree1.merge(tree2, mergeFunc);
+
+    expect(mergeCalls).toBe(0);
+    expect(result.size).toBe(tree1.size + tree2.size);
+    expect(result.get(0)).toBe(0);
+    expect(result.get(20000)).toBe(20000);
+    const resultRoot = result['_root'] as any;
+    const tree2Root = tree2['_root'] as any;
+    expect(sharesNode(resultRoot, tree2Root)).toBe(true);
+    result.checkValid();
   });
 
   test('Merge with custom object keys', () => {

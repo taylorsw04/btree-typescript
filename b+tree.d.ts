@@ -338,7 +338,7 @@ export default class BTree<K = any, V = any> implements ISortedMapF<K, V>, ISort
     /**
      * Recursively walks down the tree to insert a node at a specific depth.
      * Handles splitting along the way as needed.
-     * @returns true if successful, false if failed, or a BNode if the current node split
+     * @returns true if successful, false if the subtree must be decomposed further, or a BNode if the current node split
      */
     private static insertNodeAtDepth;
     /**
