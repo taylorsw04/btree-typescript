@@ -887,16 +887,45 @@ export default class BTree<K=any, V=any> implements ISortedMapF<K,V>, ISortedMap
   }
 
   /**
-   * Merges two BTrees into a new BTree containing the union of all key-value pairs.
-   * @param other The other BTree to merge with this one
-   * @param merge A function called when both trees have entries for the same key.
-   *        It receives (key, thisValue, otherValue) and should return the value to use,
-   *        or undefined to exclude the key from the result.
-   * @returns A new BTree containing the merged entries. Neither input tree is modified.
-   * @description Computational complexity: O(1) for non-overlapping ranges,
-   *        O(k * log n) for overlapping ranges where k is the number of overlapping keys.
+   * Merges this tree with `other`, reusing subtrees wherever possible.
+   * Neither input tree is modified.
+   * @param other The other tree to merge into this one.
+   * @param merge Called for keys that appear in both trees. Return the desired value, or
+   *        `undefined` to omit the key from the result.
+   * @returns A new BTree that contains the merged key/value pairs.
+   * @description Complexity: O(1) when the ranges do not overlap; otherwise
+   *        O(k · log n) where k is the number of overlapping keys.
    */
   merge(other: BTree<K,V>, merge: (key: K, leftValue: V, rightValue: V) => V | undefined): BTree<K,V> {
+    /* Merge algorithm:
+     *
+     * 1. First, select the deeper of the two B+ trees. This should also be the larger of the two trees.
+     *    Call the deeper tree A and the smaller one B.
+     * 2. Clone A. This clone becomes the result M and is also the structure we mutate and return.
+     * 3. Initialize a candidate collection containing the root of B.
+     *    - Each candidate stores a node plus its [min, max] key range.
+     *    - The candidates are guaranteed to be disjoint because they originate from the same B+ tree.
+     *    - Use a BTree keyed by the ranges with a comparator that treats overlapping ranges as equal.
+     *      This allows range lookups and overlap detection in O(log n).
+     *    - The collection must support:
+     *      a. Finding the unique candidate that overlaps a specific key.
+     *      b. Detecting whether any candidate is enclosed by a key range.
+     * 4. Build an array `toMerge` containing leaf nodes that cannot be reused and must later be merged manually.
+     * 5. Walk M recursively with `processSource(currentNode)`:
+     *    a. For each endpoint of `currentNode` (its min key and every key in the node),
+     *       explode overlapping candidates:
+     *       - Remove the overlapping candidate from the set.
+     *       - If it is internal, add each child as a new candidate (their ranges are disjoint subsets).
+     *       - If it is a leaf, push it onto `toMerge`.
+     *       The outer for-loop and inner while-loop continue exploding until no candidate overlaps an endpoint.
+     *    b. After the endpoints are processed, perform an enclosure query using the full [min, max] range
+     *       of `currentNode`. If any candidates are enclosed, recurse into each child of `currentNode`.
+     *       Otherwise stop recursing below this node.
+     * 6. Once the traversal finishes:
+     *    - Every remaining candidate in the set is reused via `insertSharedSubtree`.
+     *    - Every leaf in `toMerge` is merged manually (handling key conflicts via `merge`).
+     */
+
     // Fast paths for empty trees
     if (this._size === 0)
       return other.clone();
@@ -934,7 +963,7 @@ export default class BTree<K=any, V=any> implements ISortedMapF<K,V>, ISortedMap
     const cmp = this._compare;
     const sourceHeight = treeB.height;
 
-    // Comparator for disjoint range keys
+    // Comparator for disjoint range keys (Step 3)
     const compareRanges = (a: RangeKey, b: RangeKey): number => {
       if (cmp(a.max, b.min) < 0)
         return -1;
@@ -943,7 +972,9 @@ export default class BTree<K=any, V=any> implements ISortedMapF<K,V>, ISortedMap
       return 0;
     };
 
+    // Step 3: candidate set for reusable subtrees
     const candidateSet = new BTree<RangeKey, CandidateEntry>(undefined, compareRanges, treeB._maxNodeSize);
+    // Step 4: leaves that must be merged manually
     const toMerge: CandidateEntry[] = [];
 
     const addCandidate = (node: BNode<K,V>, depth: number): void => {
@@ -1002,6 +1033,7 @@ export default class BTree<K=any, V=any> implements ISortedMapF<K,V>, ISortedMap
       return false;
     };
 
+    // Step 5: recursive traversal over M that explodes overlapping candidates
     const processSource = (currentNode: BNode<K,V>, depth: number): void => {
       if (candidateSet.isEmpty)
         return;
@@ -1028,6 +1060,7 @@ export default class BTree<K=any, V=any> implements ISortedMapF<K,V>, ISortedMap
 
     processSource(result._root, 0);
 
+    // Step 6 (first half): reuse remaining candidates via subtree sharing
     const reusableEntries: CandidateEntry[] = [];
     if (!candidateSet.isEmpty) {
       candidateSet.forEachPair((range, entry) => {
@@ -1040,6 +1073,7 @@ export default class BTree<K=any, V=any> implements ISortedMapF<K,V>, ISortedMap
       BTree.insertSharedSubtree(result, entry.node, entry.depth, sourceHeight);
     }
 
+    // Step 6 (second half): merge leaf nodes that could not be reused
     const existingPairBuffer: [K,V] = [undefined as any, undefined as any];
     for (let i = 0; i < toMerge.length; i++) {
       const entry = toMerge[i];
@@ -1069,9 +1103,11 @@ export default class BTree<K=any, V=any> implements ISortedMapF<K,V>, ISortedMap
   }
 
   /**
-   * Inserts a shared subtree from source into target at the appropriate depth.
-   * This implements a standard B-tree insertion algorithm that walks down from the root
-   * until reaching a depth where nodes have the same height as the subtree being inserted.
+   * Inserts a shared subtree from the source tree into the target tree at the correct depth.
+   * Assumes the subtree is no taller than the current target. Height mismatches are treated
+   * as programmer error (guarded with `check`).
+   * The routine walks down from the root until it reaches the layer whose children share
+   * the same remaining height as the source subtree, cloning nodes on the path as needed.
    * @param target The target tree
    * @param sourceNode The node to insert (will be marked as shared)
    * @param sourceDepth The depth of sourceNode in its original tree
@@ -1151,9 +1187,11 @@ export default class BTree<K=any, V=any> implements ISortedMapF<K,V>, ISortedMap
   }
 
   /**
-   * Recursively walks down the tree to insert a node at a specific depth.
-   * Handles splitting along the way as needed.
-   * @returns true if successful, false if the subtree must be decomposed further, or a BNode if the current node split
+   * Recursive helper that inserts `nodeToInsert` at `targetDepth` beneath `currentNode`.
+   * Returns:
+   *  - `true` if the node was inserted without splitting,
+   *  - `false` if the subtree could not be placed cleanly (caller must decompose it),
+   *  - a new `BNode` if `currentNode` split and produced a right sibling.
    */
   private static insertNodeAtDepth<K,V>(
     tree: BTree<K,V>,

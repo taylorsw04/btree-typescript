@@ -315,20 +315,29 @@ export default class BTree<K = any, V = any> implements ISortedMapF<K, V>, ISort
      */
     greedyClone(force?: boolean): BTree<K, V>;
     /**
-     * Merges two BTrees into a new BTree containing the union of all key-value pairs.
-     * @param other The other BTree to merge with this one
-     * @param merge A function called when both trees have entries for the same key.
-     *        It receives (key, thisValue, otherValue) and should return the value to use,
-     *        or undefined to exclude the key from the result.
-     * @returns A new BTree containing the merged entries. Neither input tree is modified.
-     * @description Computational complexity: O(1) for non-overlapping ranges,
-     *        O(k * log n) for overlapping ranges where k is the number of overlapping keys.
+     * Merges this tree with `other`, reusing subtrees wherever possible.
+     * The merge follows the documented specification:
+     *  - Clone the deeper tree (A) to produce the mutable result M.
+     *  - Walk B, collecting candidate subtrees keyed by their disjoint [min,max] ranges.
+     *  - Recursively traverse M, exploding candidates that overlap node endpoints until only
+     *    disjoint, height-compatible subtrees remain in the candidate set.
+     *  - Reuse the surviving candidates with subtree sharing; leaves that cannot be shared
+     *    are merged key-by-key using the supplied callback.
+     * Neither input tree is modified.
+     * @param other The other tree to merge into this one.
+     * @param merge Called for keys that appear in both trees. Return the desired value, or
+     *        `undefined` to omit the key from the result.
+     * @returns A new BTree that contains the merged key/value pairs.
+     * @description Complexity: O(1) when the ranges do not overlap; otherwise
+     *        O(k · log n) where k is the number of overlapping keys.
      */
     merge(other: BTree<K, V>, merge: (key: K, leftValue: V, rightValue: V) => V | undefined): BTree<K, V>;
     /**
-     * Inserts a shared subtree from source into target at the appropriate depth.
-     * This implements a standard B-tree insertion algorithm that walks down from the root
-     * until reaching a depth where nodes have the same height as the subtree being inserted.
+     * Inserts a shared subtree from the source tree into the target tree at the correct depth.
+     * Assumes the subtree is no taller than the current target. Height mismatches are treated
+     * as programmer error (guarded with `check`).
+     * The routine walks down from the root until it reaches the layer whose children share
+     * the same remaining height as the source subtree, cloning nodes on the path as needed.
      * @param target The target tree
      * @param sourceNode The node to insert (will be marked as shared)
      * @param sourceDepth The depth of sourceNode in its original tree
@@ -336,9 +345,11 @@ export default class BTree<K = any, V = any> implements ISortedMapF<K, V>, ISort
      */
     private static insertSharedSubtree;
     /**
-     * Recursively walks down the tree to insert a node at a specific depth.
-     * Handles splitting along the way as needed.
-     * @returns true if successful, false if the subtree must be decomposed further, or a BNode if the current node split
+     * Recursive helper that inserts `nodeToInsert` at `targetDepth` beneath `currentNode`.
+     * Returns:
+     *  - `true` if the node was inserted without splitting,
+     *  - `false` if the subtree could not be placed cleanly (caller must decompose it),
+     *  - a new `BNode` if `currentNode` split and produced a right sibling.
      */
     private static insertNodeAtDepth;
     /**
