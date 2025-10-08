@@ -592,4 +592,40 @@ console.log("### Merge between B+ trees");
       return result;
     });
   });
+
+  console.log();
+  console.log("# Large sparse-overlap trees (1M keys each, 10 overlaps per 100k)");
+  {
+    const totalKeys = 1_000_000;
+    const overlapInterval = 100_000;
+    const overlapPerInterval = 10;
+
+    const tree1 = new BTree<number, number>();
+    for (let i = 0; i < totalKeys; i++) {
+      tree1.set(i, i);
+    }
+
+    const tree2 = new BTree<number, number>();
+    for (let i = 0; i < totalKeys; i++) {
+      if ((i % overlapInterval) < overlapPerInterval) {
+        tree2.set(i, i);
+      } else {
+        tree2.set(totalKeys + i, totalKeys + i);
+      }
+    }
+
+    const preferLeft = (_k: number, v1: number, _v2: number) => v1;
+
+    measure(() => `Merge ${tree1.size}+${tree2.size} sparse-overlap trees using merge()`, () => {
+      return tree1.merge(tree2, preferLeft);
+    });
+
+    measure(() => `Merge ${tree1.size}+${tree2.size} sparse-overlap trees using clone+set loop (baseline)`, () => {
+      const result = tree1.clone();
+      tree2.forEachPair((k, v) => {
+        result.set(k, v, false);
+      });
+      return result;
+    });
+  }
 }
