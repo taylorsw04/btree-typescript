@@ -416,7 +416,7 @@ console.log("### Merge between B+ trees");
   });
 
   console.log();
-  console.log("# Adjacent ranges (2 intersection points)");
+  console.log("# Adjacent ranges (one intersection points)");
   sizes.forEach((size) => {
     const tree1 = new BTree();
     const tree2 = new BTree();
@@ -446,7 +446,7 @@ console.log("### Merge between B+ trees");
   });
 
   console.log();
-  console.log("# Interleaved ranges (multiple intersection points)");
+  console.log("# Interleaved ranges (two intersection points)");
   sizes.forEach((size) => {
     const tree1 = new BTree();
     const tree2 = new BTree();
@@ -530,44 +530,6 @@ console.log("### Merge between B+ trees");
     });
     const baselineStats = countTreeNodeStats(baselineResult);
     console.log(`\tShared nodes (baseline): ${baselineStats.shared}/${baselineStats.total}`);
-  });
-
-  console.log();
-  console.log("# Merge with value combining (sum operation)");
-  sizes.forEach((size) => {
-    const tree1 = new BTree();
-    const tree2 = new BTree();
-
-    for (let i = 0; i < size; i++) {
-      tree1.set(i, i);
-      tree2.set(i, i * 10);
-    }
-
-    const sumValues = (_k: number, v1: number, v2: number) => v1 + v2;
-    const mergeResult = measure(() => `Merge ${size}+${size} trees with sum operation on all overlaps`, () => {
-      return tree1.merge(tree2, sumValues);
-    });
-    const mergeStats = countTreeNodeStats(mergeResult);
-    console.log(`\tShared nodes (merge): ${mergeStats.shared}/${mergeStats.total}`);
-  });
-
-  console.log();
-  console.log("# Merge with selective exclusion (return undefined for some keys)");
-  sizes.forEach((size) => {
-    const tree1 = new BTree();
-    const tree2 = new BTree();
-
-    for (let i = 0; i < size; i++) {
-      tree1.set(i, i);
-      tree2.set(i, i * 10);
-    }
-
-    const excludeEvens = (k: number, v1: number, _v2: number) => k % 2 === 0 ? undefined : v1;
-    const mergeResult = measure(() => `Merge ${size}+${size} trees excluding 50% of overlapping keys`, () => {
-      return tree1.merge(tree2, excludeEvens);
-    });
-    const mergeStats = countTreeNodeStats(mergeResult);
-    console.log(`\tShared nodes (merge): ${mergeStats.shared}/${mergeStats.total}`);
   });
 
   console.log();
