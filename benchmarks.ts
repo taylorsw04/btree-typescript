@@ -392,9 +392,10 @@ console.log("### Merge between B+ trees");
     const tree1 = new BTree();
     const tree2 = new BTree();
 
+    const offset = size * 3;
     for (let i = 0; i < size; i++) {
-      tree1.set(i * 2, i * 2);      // Even keys: 0, 2, 4, 6...
-      tree2.set(i * 2 + 1, i * 2 + 1); // Odd keys: 1, 3, 5, 7...
+      tree1.set(i, i);                    // Keys: 0...(size-1)
+      tree2.set(offset + i, offset + i);  // Keys well beyond tree1's range
     }
 
     const preferLeft = (_k: number, v1: number, _v2: number) => v1;
