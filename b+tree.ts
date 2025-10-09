@@ -942,27 +942,28 @@ export default class BTree<K=any, V=any> implements ISortedMapF<K,V>, ISortedMap
     const heightOther = other.height;
     let treeA: BTree<K,V> = this;
     let treeB: BTree<K,V> = other;
+    let sourceHeight: number;
+    let swapped: boolean;
     if (heightThis < heightOther || (heightThis === heightOther && sizeThis < sizeOther)) {
       treeA = other;
       treeB = this;
+      sourceHeight = heightThis;
+      swapped = true;
+    } else {
+      sourceHeight = heightOther;
+      swapped = false;
     }
-    const swapped = treeA !== this;
 
     const result = treeA.clone();
 
-    // After cloning, treeB might still be empty due to clone side-effects
-    if (nodeSize(treeB._root) === 0)
-      return result;
-
     type RangeKey = { min: K, max: K };
-    interface CandidateEntry {
+    interface ReuseCandidate {
       node: BNode<K,V>;
       depth: number;
       range: RangeKey;
     }
 
     const cmp = this._compare;
-    const sourceHeight = treeB.height;
 
     // Comparator for disjoint range keys (Step 3)
     const compareRanges = (a: RangeKey, b: RangeKey): number => {
@@ -974,28 +975,21 @@ export default class BTree<K=any, V=any> implements ISortedMapF<K,V>, ISortedMap
     };
 
     // Step 3: candidate set for reusable subtrees
-    const candidateSet = new BTree<RangeKey, CandidateEntry>(undefined, compareRanges, treeB._maxNodeSize);
+    const candidateSet = new BTree<RangeKey, ReuseCandidate>(undefined, compareRanges, treeB._maxNodeSize);
     // Step 4: leaves that must be merged manually
-    const toMerge: CandidateEntry[] = [];
+    const toMerge: ReuseCandidate[] = [];
 
     const addCandidate = (node: BNode<K,V>, depth: number): void => {
-      const min = node.minKey();
-      const max = node.maxKey();
-      if (min === undefined || max === undefined)
-        return;
+      const min = node.minKey()!;
+      const max = node.maxKey()!;
       const range: RangeKey = { min, max };
       candidateSet.set(range, { node, depth, range });
     };
 
+    // start with root as candidate
     addCandidate(treeB._root, 0);
-    if (candidateSet.isEmpty)
-      return result;
 
-    const keyQuery: RangeKey = { min: treeB._root.minKey()!, max: treeB._root.minKey()! };
-    const lowRange: RangeKey = { min: keyQuery.min, max: keyQuery.min };
-    const highRange: RangeKey = { min: keyQuery.min, max: keyQuery.min };
-
-    const explodeCandidate = (entry: CandidateEntry): void => {
+    const explodeCandidate = (entry: ReuseCandidate): void => {
       candidateSet.delete(entry.range);
       const node = entry.node;
       if (node.isLeaf) {
@@ -1009,29 +1003,22 @@ export default class BTree<K=any, V=any> implements ISortedMapF<K,V>, ISortedMap
       }
     };
 
-    const explodeOverlaps = (key: K | undefined): void => {
-      if (key === undefined || candidateSet.isEmpty)
-        return;
-      keyQuery.min = key;
-      keyQuery.max = key;
+    const explodeOverlaps = (key: K): void => {
+      const keyQuery: RangeKey = { min: key, max: key };
+      // Keep exploding candidates until none of them overlap this key
       for (let entry = candidateSet.get(keyQuery); entry; entry = candidateSet.get(keyQuery))
         explodeCandidate(entry);
     };
 
-    const hasEnclosedCandidate = (minKey: K | undefined, maxKey: K | undefined): boolean => {
-      if (candidateSet.isEmpty || minKey === undefined || maxKey === undefined)
-        return false;
-      lowRange.min = minKey;
-      lowRange.max = minKey;
-      highRange.min = maxKey;
-      highRange.max = maxKey;
+    const getEnclosedCandidates = (minKey: K, maxKey: K, output: ReuseCandidate[]): void => {
+      const lowRange: RangeKey = { min: minKey, max: minKey };
+      const highRange: RangeKey = { min: maxKey, max: maxKey };
       const enclosedPairs = candidateSet.getRange(lowRange, highRange, true);
       for (let i = 0; i < enclosedPairs.length; i++) {
         const range = enclosedPairs[i][0];
-        if (cmp(range.min, minKey) >= 0 && cmp(range.max, maxKey) <= 0)
-          return true;
+        if (cmp(range.min, minKey) > 0 && cmp(range.max, maxKey) < 0)
+          output.push(enclosedPairs[i][1]);
       }
-      return false;
     };
 
     // Step 5: recursive traversal over M that explodes overlapping candidates
@@ -1039,30 +1026,49 @@ export default class BTree<K=any, V=any> implements ISortedMapF<K,V>, ISortedMap
       if (candidateSet.isEmpty)
         return;
 
-      const minKey = currentNode.minKey();
+      const minKey = currentNode.minKey()!;
       explodeOverlaps(minKey);
 
       const keys = currentNode.keys;
       for (let i = 0; i < keys.length; i++)
         explodeOverlaps(keys[i]);
 
-      if (candidateSet.isEmpty || currentNode.isLeaf)
+      if (candidateSet.isEmpty)
         return;
 
       const maxKey = currentNode.maxKey();
-      if (!hasEnclosedCandidate(minKey, maxKey))
-        return;
+      const enclosedCandidates: ReuseCandidate[] = [];
+      if (currentNode.isLeaf) {
+        while (true) {
+          enclosedCandidates.length = 0;
+          getEnclosedCandidates(minKey, maxKey, enclosedCandidates);
+          if (enclosedCandidates.length === 0)
+            return;
+          let explodedAny = false;
+          for (let i = 0; i < enclosedCandidates.length; i++) {
+            explodeCandidate(enclosedCandidates[i]);
+            explodedAny = true;
+          }
+          if (!explodedAny || candidateSet.isEmpty)
+            return;
+        }
+      }
 
-      const internal = currentNode as unknown as BNodeInternal<K,V>;
-      const nextDepth = depth + 1;
-      for (let i = 0; i < internal.children.length; i++)
-        processSource(internal.children[i], nextDepth);
+      enclosedCandidates.length = 0;
+      getEnclosedCandidates(minKey, maxKey, enclosedCandidates);
+      if (enclosedCandidates.length > 0) {
+        const internal = currentNode as unknown as BNodeInternal<K,V>;
+        const children = internal.children;
+        const nextDepth = depth + 1;
+        for (let i = 0; i < children.length; i++)
+          processSource(children[i], nextDepth);
+      }
     };
 
     processSource(result._root, 0);
 
     // Step 6 (first half): reuse remaining candidates via subtree sharing
-    const reusableEntries: CandidateEntry[] = [];
+    const reusableEntries: ReuseCandidate[] = [];
     if (!candidateSet.isEmpty) {
       candidateSet.forEachPair((range, entry) => {
         reusableEntries.push(entry);
@@ -1149,27 +1155,29 @@ export default class BTree<K=any, V=any> implements ISortedMapF<K,V>, ISortedMap
       const existingMax = existingRoot.maxKey();
       if (existingMin === undefined || existingMax === undefined)
         throw new Error("insertSharedSubtree: cannot grow root of empty target.");
-      if (cmp(maxKey, existingMin) < 0 || cmp(existingMax, minKey) < 0) {
+      let children: BNode<K,V>[];
+      // TODO: maybe remove these special handlings of first/last
+      if (cmp(maxKey, existingMin) < 0) {
         markNodeShared(sourceNode);
-        target._root = cmp(maxKey, existingMin) < 0
-          ? new BNodeInternal<K,V>([sourceNode, existingRoot])
-          : new BNodeInternal<K,V>([existingRoot, sourceNode]);
+        children = [sourceNode, existingRoot];
+      } else if (cmp(existingMax, minKey) < 0) {
+        markNodeShared(sourceNode);
+        children = [existingRoot, sourceNode];
+      } else {
+        if (!sourceNode.isLeaf) {
+          const internal = sourceNode as unknown as BNodeInternal<K,V>;
+          for (let i = 0; i < internal.children.length; i++) {
+            const child = internal.children[i];
+            this.insertSharedSubtree(target, child, sourceDepth + 1, sourceHeight - 1);
+          }
+        }
         return;
       }
-      if (sourceNode.isLeaf)
-        throw new Error("insertSharedSubtree: overlapping leaf cannot be decomposed further.");
-      const internalSource = sourceNode as unknown as BNodeInternal<K,V>;
-      const nextDepth = sourceDepth + 1;
-      for (let i = 0; i < internalSource.children.length; i++) {
-        const child = internalSource.children[i];
-        const childMin = child.minKey();
-        const childMax = child.maxKey();
-        if (childMin === undefined || childMax === undefined)
-          continue;
-        BTree.insertSharedSubtree(target, child, nextDepth, sourceHeight);
-      }
+      target._root = new BNodeInternal<K,V>(children);
       return;
     }
+
+    markNodeShared(sourceNode);
 
     if (target._root.isLeaf)
       throw new Error("insertSharedSubtree: target root is unexpectedly a leaf.");
@@ -1180,22 +1188,6 @@ export default class BTree<K=any, V=any> implements ISortedMapF<K,V>, ISortedMap
         if (nodesToRefresh[i] === node)
           return;
       nodesToRefresh.push(node);
-    };
-    const refreshTrackedNodes = (): void => {
-      for (let i = 0; i < nodesToRefresh.length; i++) {
-        const node = nodesToRefresh[i];
-        if (nodeIsShared(node))
-          continue;
-        const children = node.children;
-        const keys = node.keys;
-        let size = 0;
-        for (let j = 0; j < children.length; j++) {
-          const child = children[j];
-          keys[j] = child.maxKey();
-          size += nodeSize(child);
-        }
-        setNodeSize(node, size);
-      }
     };
 
     const ancestors: BNodeInternal<K,V>[] = [];
@@ -1238,35 +1230,18 @@ export default class BTree<K=any, V=any> implements ISortedMapF<K,V>, ISortedMap
     if (insertIndex > parentChildren.length)
       insertIndex = parentChildren.length;
 
-    const decomposeAndInsert = (): void => {
-      if (sourceNode.isLeaf)
-        throw new Error("insertSharedSubtree: overlapping leaf cannot be decomposed further.");
-      const internalSource = sourceNode as unknown as BNodeInternal<K,V>;
-      const nextDepth = sourceDepth + 1;
-      for (let i = 0; i < internalSource.children.length; i++) {
-        const child = internalSource.children[i];
-        const childMin = child.minKey();
-        const childMax = child.maxKey();
-        if (childMin === undefined || childMax === undefined)
-          continue;
-        BTree.insertSharedSubtree(target, child, nextDepth, sourceHeight);
-      }
-      refreshTrackedNodes();
-    };
-
     if (insertIndex > 0) {
       const left = parentChildren[insertIndex - 1];
       if (cmp(left.maxKey(), minKey) >= 0)
-        return decomposeAndInsert();
+        throw new Error("insertSharedSubtree: subtree min overlaps left sibling.");
     }
     if (insertIndex < parentChildren.length) {
       const right = parentChildren[insertIndex];
       const rightMin = right.minKey();
       if (rightMin !== undefined && cmp(maxKey, rightMin) >= 0)
-        return decomposeAndInsert();
+        throw new Error("insertSharedSubtree: subtree max overlaps right sibling.");
     }
 
-    markNodeShared(sourceNode);
     parent.insert(insertIndex, sourceNode);
 
     let currentNode: BNodeInternal<K,V> = parent;
@@ -1289,7 +1264,20 @@ export default class BTree<K=any, V=any> implements ISortedMapF<K,V>, ISortedMap
       currentNode = parentNode;
     }
 
-    refreshTrackedNodes();
+    for (let i = nodesToRefresh.length - 1; i >= 0; i--) {
+      const node = nodesToRefresh[i];
+      if (nodeIsShared(node))
+        continue;
+      const children = node.children;
+      const keys = node.keys;
+      let size = 0;
+      for (let j = 0; j < children.length; j++) {
+        const child = children[j];
+        keys[j] = child.maxKey();
+        size += nodeSize(child);
+      }
+      setNodeSize(node, size);
+    }
   }
 
   /**

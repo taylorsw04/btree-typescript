@@ -841,17 +841,20 @@ var BTree = /** @class */ (function () {
         var heightOther = other.height;
         var treeA = this;
         var treeB = other;
+        var sourceHeight;
+        var swapped;
         if (heightThis < heightOther || (heightThis === heightOther && sizeThis < sizeOther)) {
             treeA = other;
             treeB = this;
+            sourceHeight = heightThis;
+            swapped = true;
         }
-        var swapped = treeA !== this;
+        else {
+            sourceHeight = heightOther;
+            swapped = false;
+        }
         var result = treeA.clone();
-        // After cloning, treeB might still be empty due to clone side-effects
-        if (nodeSize(treeB._root) === 0)
-            return result;
         var cmp = this._compare;
-        var sourceHeight = treeB.height;
         // Comparator for disjoint range keys (Step 3)
         var compareRanges = function (a, b) {
             if (cmp(a.max, b.min) < 0)
@@ -867,17 +870,11 @@ var BTree = /** @class */ (function () {
         var addCandidate = function (node, depth) {
             var min = node.minKey();
             var max = node.maxKey();
-            if (min === undefined || max === undefined)
-                return;
             var range = { min: min, max: max };
             candidateSet.set(range, { node: node, depth: depth, range: range });
         };
+        // start with root as candidate
         addCandidate(treeB._root, 0);
-        if (candidateSet.isEmpty)
-            return result;
-        var keyQuery = { min: treeB._root.minKey(), max: treeB._root.minKey() };
-        var lowRange = { min: keyQuery.min, max: keyQuery.min };
-        var highRange = { min: keyQuery.min, max: keyQuery.min };
         var explodeCandidate = function (entry) {
             candidateSet.delete(entry.range);
             var node = entry.node;
@@ -892,27 +889,20 @@ var BTree = /** @class */ (function () {
             }
         };
         var explodeOverlaps = function (key) {
-            if (key === undefined || candidateSet.isEmpty)
-                return;
-            keyQuery.min = key;
-            keyQuery.max = key;
+            var keyQuery = { min: key, max: key };
+            // Keep exploding candidates until none of them overlap this key
             for (var entry = candidateSet.get(keyQuery); entry; entry = candidateSet.get(keyQuery))
                 explodeCandidate(entry);
         };
-        var hasEnclosedCandidate = function (minKey, maxKey) {
-            if (candidateSet.isEmpty || minKey === undefined || maxKey === undefined)
-                return false;
-            lowRange.min = minKey;
-            lowRange.max = minKey;
-            highRange.min = maxKey;
-            highRange.max = maxKey;
+        var getEnclosedCandidates = function (minKey, maxKey, output) {
+            var lowRange = { min: minKey, max: minKey };
+            var highRange = { min: maxKey, max: maxKey };
             var enclosedPairs = candidateSet.getRange(lowRange, highRange, true);
             for (var i = 0; i < enclosedPairs.length; i++) {
                 var range = enclosedPairs[i][0];
-                if (cmp(range.min, minKey) >= 0 && cmp(range.max, maxKey) <= 0)
-                    return true;
+                if (cmp(range.min, minKey) > 0 && cmp(range.max, maxKey) < 0)
+                    output.push(enclosedPairs[i][1]);
             }
-            return false;
         };
         // Step 5: recursive traversal over M that explodes overlapping candidates
         var processSource = function (currentNode, depth) {
@@ -923,15 +913,69 @@ var BTree = /** @class */ (function () {
             var keys = currentNode.keys;
             for (var i = 0; i < keys.length; i++)
                 explodeOverlaps(keys[i]);
-            if (candidateSet.isEmpty || currentNode.isLeaf)
+            if (candidateSet.isEmpty)
                 return;
             var maxKey = currentNode.maxKey();
-            if (!hasEnclosedCandidate(minKey, maxKey))
-                return;
-            var internal = currentNode;
-            var nextDepth = depth + 1;
-            for (var i = 0; i < internal.children.length; i++)
-                processSource(internal.children[i], nextDepth);
+            var enclosedCandidates = [];
+            if (currentNode.isLeaf) {
+                while (true) {
+                    enclosedCandidates.length = 0;
+                    getEnclosedCandidates(minKey, maxKey, enclosedCandidates);
+                    if (enclosedCandidates.length === 0)
+                        return;
+                    var explodedAny = false;
+                    for (var i = 0; i < enclosedCandidates.length; i++) {
+                        explodeCandidate(enclosedCandidates[i]);
+                        explodedAny = true;
+                    }
+                    if (!explodedAny || candidateSet.isEmpty)
+                        return;
+                }
+            }
+            enclosedCandidates.length = 0;
+            getEnclosedCandidates(minKey, maxKey, enclosedCandidates);
+            if (enclosedCandidates.length > 0) {
+                var internal = currentNode;
+                var children = internal.children;
+                var nextDepth = depth + 1;
+                for (var i = 0; i < children.length; i++)
+                    processSource(children[i], nextDepth);
+            }
+            // const internal = currentNode as unknown as BNodeInternal<K,V>;
+            // const children = internal.children;
+            // for (let i = 0; i < children.length; i++)
+            //   explodeOverlaps(children[i].minKey()!);
+            // if (candidateSet.isEmpty)
+            //   return;
+            // while (true) {
+            //   enclosedCandidates.length = 0;
+            //   getEnclosedCandidates(minKey, maxKey, enclosedCandidates);
+            //   if (enclosedCandidates.length === 0)
+            //     return;
+            //   let explodedAny = false;
+            //   for (let i = 0; i < enclosedCandidates.length; i++) {
+            //     const candidate = enclosedCandidates[i];
+            //     const cRange = candidate.range;
+            //     let overlapsChild = false;
+            //     for (let j = 0; j < children.length; j++) {
+            //       const child = children[j];
+            //       const childMin = child.minKey();
+            //       const childMax = child.maxKey();
+            //       if (childMin === undefined || childMax === undefined)
+            //         continue;
+            //       if (cmp(cRange.max, childMin) >= 0 && cmp(cRange.min, childMax) <= 0) {
+            //         overlapsChild = true;
+            //         break;
+            //       }
+            //     }
+            //     if (!overlapsChild) {
+            //       explodeCandidate(candidate);
+            //       explodedAny = true;
+            //     }
+            //   }
+            //   if (!explodedAny || candidateSet.isEmpty)
+            //     break;
+            // }
         };
         processSource(result._root, 0);
         // Step 6 (first half): reuse remaining candidates via subtree sharing
@@ -1011,27 +1055,30 @@ var BTree = /** @class */ (function () {
             var existingMax = existingRoot.maxKey();
             if (existingMin === undefined || existingMax === undefined)
                 throw new Error("insertSharedSubtree: cannot grow root of empty target.");
-            if (cmp(maxKey, existingMin) < 0 || cmp(existingMax, minKey) < 0) {
+            var children = void 0;
+            // TODO: maybe remove these special handlings of first/last
+            if (cmp(maxKey, existingMin) < 0) {
                 markNodeShared(sourceNode);
-                target._root = cmp(maxKey, existingMin) < 0
-                    ? new BNodeInternal([sourceNode, existingRoot])
-                    : new BNodeInternal([existingRoot, sourceNode]);
+                children = [sourceNode, existingRoot];
+            }
+            else if (cmp(existingMax, minKey) < 0) {
+                markNodeShared(sourceNode);
+                children = [existingRoot, sourceNode];
+            }
+            else {
+                if (!sourceNode.isLeaf) {
+                    var internal = sourceNode;
+                    for (var i = 0; i < internal.children.length; i++) {
+                        var child = internal.children[i];
+                        this.insertSharedSubtree(target, child, sourceDepth + 1, sourceHeight - 1);
+                    }
+                }
                 return;
             }
-            if (sourceNode.isLeaf)
-                throw new Error("insertSharedSubtree: overlapping leaf cannot be decomposed further.");
-            var internalSource = sourceNode;
-            var nextDepth = sourceDepth + 1;
-            for (var i = 0; i < internalSource.children.length; i++) {
-                var child = internalSource.children[i];
-                var childMin = child.minKey();
-                var childMax = child.maxKey();
-                if (childMin === undefined || childMax === undefined)
-                    continue;
-                BTree.insertSharedSubtree(target, child, nextDepth, sourceHeight);
-            }
+            target._root = new BNodeInternal(children);
             return;
         }
+        markNodeShared(sourceNode);
         if (target._root.isLeaf)
             throw new Error("insertSharedSubtree: target root is unexpectedly a leaf.");
         var nodesToRefresh = [];
@@ -1086,7 +1133,6 @@ var BTree = /** @class */ (function () {
             if (rightMin !== undefined && cmp(maxKey, rightMin) >= 0)
                 throw new Error("insertSharedSubtree: subtree max overlaps right sibling.");
         }
-        markNodeShared(sourceNode);
         parent.insert(insertIndex, sourceNode);
         var currentNode = parent;
         while (currentNode.keys.length > target._maxNodeSize) {
@@ -1107,7 +1153,7 @@ var BTree = /** @class */ (function () {
             trackNode(parentNode);
             currentNode = parentNode;
         }
-        for (var i = 0; i < nodesToRefresh.length; i++) {
+        for (var i = nodesToRefresh.length - 1; i >= 0; i--) {
             var node = nodesToRefresh[i];
             if (nodeIsShared(node))
                 continue;
