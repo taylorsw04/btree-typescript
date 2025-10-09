@@ -1279,24 +1279,7 @@ export default class BTree<K=any, V=any> implements ISortedMapF<K,V>, ISortedMap
       setNodeSize(node, size);
     }
   }
-
-  /**
-   * Collects all key-value pairs from a subtree.
-   */
-  private static collectPairsHelper<K,V>(node: BNode<K,V>, pairs: [K, V][]): void {
-    if (node.isLeaf) {
-      for (let i = 0; i < node.keys.length; i++) {
-        pairs.push([node.keys[i], node.values[i]]);
-      }
-    } else {
-      const internal = node as any as BNodeInternal<K,V>;
-      for (let i = 0; i < internal.children.length; i++) {
-        BTree.collectPairsHelper(internal.children[i], pairs);
-      }
-    }
-  }
-
-
+  
   /** Gets an array filled with the contents of the tree, sorted by key */
   toArray(maxLength: number = 0x7FFFFFFF): [K,V][] {
     let min = this.minKey(), max = this.maxKey();
