@@ -1105,10 +1105,7 @@ export default class BTree<K=any, V=any> implements ISortedMapF<K,V>, ISortedMap
 
   /**
    * Inserts a shared subtree from the source tree into the target tree at the correct depth.
-   * Assumes the subtree is no taller than the current target. Height mismatches are treated
-   * as programmer error (guarded with `check`).
-   * The routine walks down from the root until it reaches the layer whose children share
-   * the same remaining height as the source subtree, cloning nodes on the path as needed.
+   * Assumes the subtree is no taller than the current target.
    * @param target The target tree
    * @param sourceNode The node to insert (will be marked as shared)
    * @param sourceDepth The depth of sourceNode in its original tree
@@ -1120,175 +1117,151 @@ export default class BTree<K=any, V=any> implements ISortedMapF<K,V>, ISortedMap
     sourceDepth: number,
     sourceHeight: number
   ): void {
+    const minKey = sourceNode.minKey();
+    const maxKey = sourceNode.maxKey();
+    if (minKey === undefined || maxKey === undefined)
+      return;
+
+    const cmp = target._compare;
+    const prevBuffer = [undefined as any, undefined as any] as [K,V];
+    const nextBuffer = [undefined as any, undefined as any] as [K,V];
+    const prevPair = target.getPairOrNextLower(maxKey, prevBuffer);
+    if (prevPair !== undefined && cmp(prevPair[0], minKey) >= 0 && cmp(prevPair[0], maxKey) <= 0)
+      throw new Error("insertSharedSubtree: overlapping keys detected (lower bound).");
+    const nextPair = target.getPairOrNextHigher(minKey, nextBuffer);
+    if (nextPair !== undefined && cmp(nextPair[0], maxKey) <= 0 && cmp(nextPair[0], minKey) >= 0)
+      throw new Error("insertSharedSubtree: overlapping keys detected (upper bound).");
+
     // Mark the node as shared since we're reusing it
     markNodeShared(sourceNode);
 
-    // Calculate the height of the subtree rooted at sourceNode
     const subtreeHeight = sourceHeight - sourceDepth;
     const targetHeight = target.height;
-    const cmp = target._compare;
+    if (subtreeHeight < 0)
+      throw new Error("insertSharedSubtree: invalid subtree height.");
+    if (subtreeHeight > targetHeight)
+      throw new Error("insertSharedSubtree: subtree height exceeds target height.");
 
-    check(subtreeHeight <= targetHeight, "insertSharedSubtree called with taller source subtree");
-
-    // Case 2: subtreeHeight === targetHeight
-    // Heights match - can create new root combining both
-    if (subtreeHeight === targetHeight) {
-      const sourceMinKey = sourceNode.minKey()!;
-      const sourceMaxKey = sourceNode.maxKey()!;
-      const targetMinKey = target._root.minKey()!;
-      const targetMaxKey = target._root.maxKey()!;
-
-      // Only optimize if source is entirely before or entirely after target
-      const sourceBeforeTarget = cmp(sourceMaxKey, targetMinKey) < 0;
-      const sourceAfterTarget = cmp(sourceMinKey, targetMaxKey) > 0;
-
-      if (sourceBeforeTarget) {
-        target._root = new BNodeInternal<K,V>([sourceNode, target._root]);
-        return;
-      } else if (sourceAfterTarget) {
-        target._root = new BNodeInternal<K,V>([target._root, sourceNode]);
-        return;
-      }
-      // If interleaved, fall through to key-by-key insertion
-    }
-    const targetDepth = Math.max(0, targetHeight - subtreeHeight - 1);
-
-    // Clone root if shared
-    if (nodeIsShared(target._root)) {
+    if (nodeIsShared(target._root))
       target._root = target._root.clone();
-    }
 
-    // Walk down and insert at target depth
-    const result = BTree.insertNodeAtDepth(target, target._root, sourceNode, targetDepth, 0);
-
-    if (result === false) {
-      if (sourceNode.isLeaf) {
-        const pairs: [K, V][] = [];
-        BTree.collectPairsHelper(sourceNode, pairs);
-        for (let i = 0; i < pairs.length; i++) {
-          target.set(pairs[i][0], pairs[i][1]);
-        }
+    const parentDepth = targetHeight - subtreeHeight - 1;
+    if (parentDepth < 0) {
+      const existingRoot = target._root;
+      const existingMin = existingRoot.minKey();
+      const existingMax = existingRoot.maxKey();
+      if (existingMin === undefined || existingMax === undefined)
+        throw new Error("insertSharedSubtree: cannot grow root of empty target.");
+      let children: BNode<K,V>[];
+      if (cmp(maxKey, existingMin) < 0) {
+        children = [sourceNode, existingRoot];
+      } else if (cmp(existingMax, minKey) < 0) {
+        children = [existingRoot, sourceNode];
       } else {
-        const internal = sourceNode as any as BNodeInternal<K,V>;
-        for (let i = 0; i < internal.children.length; i++) {
-          BTree.insertSharedSubtree(target, internal.children[i], sourceDepth + 1, sourceHeight);
-        }
+        throw new Error("insertSharedSubtree: subtree range overlaps existing root.");
       }
+      target._root = new BNodeInternal<K,V>(children);
       return;
     }
 
-    // Handle root split
-    if (result !== true) {
-      target._root = new BNodeInternal<K,V>([target._root, result]);
-    }
+    if (target._root.isLeaf)
+      throw new Error("insertSharedSubtree: target root is unexpectedly a leaf.");
 
-  }
+    const nodesToRefresh: BNodeInternal<K,V>[] = [];
+    const trackNode = (node: BNodeInternal<K,V>) => {
+      for (let i = 0; i < nodesToRefresh.length; i++)
+        if (nodesToRefresh[i] === node)
+          return;
+      nodesToRefresh.push(node);
+    };
 
-  /**
-   * Recursive helper that inserts `nodeToInsert` at `targetDepth` beneath `currentNode`.
-   * Returns:
-   *  - `true` if the node was inserted without splitting,
-   *  - `false` if the subtree could not be placed cleanly (caller must decompose it),
-   *  - a new `BNode` if `currentNode` split and produced a right sibling.
-   */
-  private static insertNodeAtDepth<K,V>(
-    tree: BTree<K,V>,
-    currentNode: BNode<K,V>,
-    nodeToInsert: BNode<K,V>,
-    targetDepth: number,
-    currentDepth: number
-  ): BNode<K,V> | true | false {
-    // Validate we're not trying to insert into a leaf
-    if (currentDepth === targetDepth && currentNode.isLeaf) {
-      throw new Error(`Cannot insert node at depth ${targetDepth} - reached leaf at depth ${currentDepth}`);
-    }
+    const ancestors: BNodeInternal<K,V>[] = [];
+    const ancestorIndices: number[] = [];
 
-    if (currentDepth === targetDepth) {
-      // We've reached the target depth - insert the node here
-      const internal = currentNode as any as BNodeInternal<K,V>;
-      const insertKey = nodeToInsert.maxKey()!;
-      const i = internal.indexOf(insertKey, 0, tree._compare);
+    let current: BNode<K,V> = target._root;
+    trackNode(current as unknown as BNodeInternal<K,V>);
+
+    let depth = 0;
+    while (depth < parentDepth) {
+      const internal = current as unknown as BNodeInternal<K,V>;
+      let childIndex = internal.indexOf(maxKey, 0, cmp);
       const children = internal.children;
-      const minKey = nodeToInsert.minKey()!;
-      if (i > 0) {
-        const prevChild = children[i - 1];
-        if (tree._compare(prevChild.maxKey(), minKey) >= 0)
-          return false;
-      }
-      if (i < children.length) {
-        const nextChild = children[i];
-        const nextMin = nextChild.minKey();
-        if (nextMin !== undefined && tree._compare(insertKey, nextMin) >= 0)
-          return false;
-      }
-      if (children.length > 0)
-        check(children[0].isLeaf === nodeToInsert.isLeaf, "Cannot mix leaf and internal children when inserting shared subtree");
-
-      // Insert the child at position i
-      if (internal.keys.length < tree._maxNodeSize) {
-        internal.insert(i, nodeToInsert);
-        return true;
-      } else {
-        // Node is full, need to split
-        const newRight = internal.splitOffRightSide() as BNodeInternal<K,V>;
-        const insertionIndex = i;
-        const leftSize = internal.keys.length;
-        if (insertionIndex <= leftSize) {
-          internal.insert(insertionIndex, nodeToInsert);
-        } else {
-          newRight.insert(insertionIndex - leftSize, nodeToInsert);
-        }
-        return newRight;
-      }
-    } else {
-      // Need to descend further
-      if (currentNode.isLeaf) {
-        throw new Error(`Cannot descend from leaf at depth ${currentDepth}, target depth is ${targetDepth}`);
-      }
-
-      const internal = currentNode as any as BNodeInternal<K,V>;
-      const insertKey = nodeToInsert.maxKey()!;
-      const i = Math.min(internal.indexOf(insertKey, 0, tree._compare), internal.children.length - 1);
-      let child = internal.children[i];
-
-      // Clone if shared
+      if (childIndex >= children.length)
+        childIndex = children.length - 1;
+      ancestors.push(internal);
+      ancestorIndices.push(childIndex);
+      let child = children[childIndex];
       if (nodeIsShared(child)) {
-        internal.children[i] = child = child.clone();
+        child = child.clone();
+        children[childIndex] = child;
       }
-
-      // Recurse
-      const childSizeBefore = nodeSize(child);
-      const result = BTree.insertNodeAtDepth(tree, child, nodeToInsert, targetDepth, currentDepth + 1);
-      const childSizeAfter = nodeSize(child);
-      adjustNodeSize(internal, childSizeAfter - childSizeBefore);
-
-      if (result === true) {
-        // No split, just update max key
-        internal.keys[i] = child.maxKey();
-        return true;
+      current = child;
+      depth++;
+      if (depth < parentDepth) {
+        if (current.isLeaf)
+          throw new Error("insertSharedSubtree: target path terminated before reaching required depth.");
+        trackNode(current as unknown as BNodeInternal<K,V>);
       }
-      if (result === false)
-        return false;
+    }
 
-      // Child split, need to insert the new sibling
-      const newSibling = result;
-      internal.keys[i] = child.maxKey();
+    if (current.isLeaf)
+      throw new Error("insertSharedSubtree: found leaf at insertion level.");
 
-      if (internal.keys.length < tree._maxNodeSize) {
-        internal.insert(i + 1, newSibling);
-        return true;
-      } else {
-        // This node is also full, split it
-        const newRight = internal.splitOffRightSide() as BNodeInternal<K,V>;
-        const insertionIndex = i + 1;
-        const leftSize = internal.keys.length;
-        if (insertionIndex <= leftSize) {
-          internal.insert(insertionIndex, newSibling);
-        } else {
-          newRight.insert(insertionIndex - leftSize, newSibling);
-        }
-        return newRight;
+    const parent = current as unknown as BNodeInternal<K,V>;
+    trackNode(parent);
+
+    let insertIndex = parent.indexOf(maxKey, 0, cmp);
+    const parentChildren = parent.children;
+    if (insertIndex > parentChildren.length)
+      insertIndex = parentChildren.length;
+
+    if (insertIndex > 0) {
+      const left = parentChildren[insertIndex - 1];
+      if (cmp(left.maxKey(), minKey) >= 0)
+        throw new Error("insertSharedSubtree: subtree min overlaps left sibling.");
+    }
+    if (insertIndex < parentChildren.length) {
+      const right = parentChildren[insertIndex];
+      const rightMin = right.minKey();
+      if (rightMin !== undefined && cmp(maxKey, rightMin) >= 0)
+        throw new Error("insertSharedSubtree: subtree max overlaps right sibling.");
+    }
+
+    parent.insert(insertIndex, sourceNode);
+
+    let currentNode: BNodeInternal<K,V> = parent;
+    while (currentNode.keys.length > target._maxNodeSize) {
+      const newRight = currentNode.splitOffRightSide() as BNodeInternal<K,V>;
+      trackNode(currentNode);
+      trackNode(newRight);
+      if (ancestors.length === 0) {
+        target._root = new BNodeInternal<K,V>([currentNode, newRight]);
+        trackNode(target._root as unknown as BNodeInternal<K,V>);
+        break;
       }
+      const parentNode = ancestors.pop()!;
+      let parentIndex = ancestorIndices.pop()!;
+      if (nodeIsShared(parentNode))
+        throw new Error("insertSharedSubtree: ancestor unexpectedly shared.");
+      parentNode.children[parentIndex] = currentNode;
+      parentNode.insert(parentIndex + 1, newRight);
+      trackNode(parentNode);
+      currentNode = parentNode;
+    }
+
+    for (let i = 0; i < nodesToRefresh.length; i++) {
+      const node = nodesToRefresh[i];
+      if (nodeIsShared(node))
+        continue;
+      const children = node.children;
+      const keys = node.keys;
+      let size = 0;
+      for (let j = 0; j < children.length; j++) {
+        const child = children[j];
+        keys[j] = child.maxKey();
+        size += nodeSize(child);
+      }
+      setNodeSize(node, size);
     }
   }
 

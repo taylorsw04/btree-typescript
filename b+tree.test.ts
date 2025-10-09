@@ -1438,6 +1438,71 @@ function testMerge(maxNodeSize: number) {
     expect(tree1.size).toBe(size);
     expect(tree2.size).toBe(size);
   });
+
+  if (maxNodeSize === 4) {
+    test('Merge interleaved ranges maintains reuse', () => {
+      const size = 100;
+      const tree1 = new BTree<number, number>([], compare, maxNodeSize);
+      const tree2 = new BTree<number, number>([], compare, maxNodeSize);
+
+      for (let i = 0; i < size; i++) {
+        tree1.set(i, i);
+        tree1.set(i + 2 * size, i + 2 * size);
+      }
+      for (let i = 0; i < size; i++) {
+        tree2.set(i + size, i + size);
+      }
+
+      const preferLeft = (_k: number, v1: number, _v2: number) => v1;
+      const result = tree1.merge(tree2, preferLeft);
+
+      expect(result.size).toBe(size * 3);
+      result.checkValid();
+
+      for (let i = 0; i < size * 3; i++)
+        expect(result.get(i)).toBe(i);
+
+      const countNodes = (node: any): number => {
+        if (!node) return 0;
+        let total = 1;
+        if (!node.isLeaf) {
+          for (const child of node.children)
+            total += countNodes(child);
+        }
+        return total;
+      };
+
+      const countShared = (node: any, ancestorShared: boolean): { total: number, shared: number } => {
+        if (!node) return { total: 0, shared: 0 };
+        const shared = (node.sharedSizeTag < 0) || ancestorShared;
+        let total = 1;
+        let sharedCount = shared ? 1 : 0;
+        if (!node.isLeaf) {
+          for (const child of node.children) {
+            const childStats = countShared(child, shared);
+            total += childStats.total;
+            sharedCount += childStats.shared;
+          }
+        }
+        return { total, shared: sharedCount };
+      };
+
+      const tree1Nodes = countNodes(tree1['_root']);
+      const resultNodes = countNodes(result['_root']);
+      expect(tree1Nodes).toBe(76);
+      expect(resultNodes).toBe(111);
+
+      const resultStats = countShared(result['_root'], false);
+      expect(resultStats.shared).toBe(69);
+      expect(resultStats.total).toBe(111);
+      expect(resultStats.shared).toBeGreaterThan(tree1Nodes / 2); // ensure meaningful reuse
+      expect(resultStats.shared).toBeLessThan(resultStats.total); // not complete reuse
+
+      const tree2Root = tree2['_root'];
+      const resultRoot = result['_root'];
+      expect(sharesNode(resultRoot, tree2Root)).toBe(false);
+    });
+  }
 }
 
 describe('BTree merge fuzz tests', () => {

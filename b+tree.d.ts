@@ -326,24 +326,13 @@ export default class BTree<K = any, V = any> implements ISortedMapF<K, V>, ISort
     merge(other: BTree<K, V>, merge: (key: K, leftValue: V, rightValue: V) => V | undefined): BTree<K, V>;
     /**
      * Inserts a shared subtree from the source tree into the target tree at the correct depth.
-     * Assumes the subtree is no taller than the current target. Height mismatches are treated
-     * as programmer error (guarded with `check`).
-     * The routine walks down from the root until it reaches the layer whose children share
-     * the same remaining height as the source subtree, cloning nodes on the path as needed.
+     * Assumes the subtree is no taller than the current target.
      * @param target The target tree
      * @param sourceNode The node to insert (will be marked as shared)
      * @param sourceDepth The depth of sourceNode in its original tree
      * @param sourceHeight The total height of the source tree
      */
     private static insertSharedSubtree;
-    /**
-     * Recursive helper that inserts `nodeToInsert` at `targetDepth` beneath `currentNode`.
-     * Returns:
-     *  - `true` if the node was inserted without splitting,
-     *  - `false` if the subtree could not be placed cleanly (caller must decompose it),
-     *  - a new `BNode` if `currentNode` split and produced a right sibling.
-     */
-    private static insertNodeAtDepth;
     /**
      * Collects all key-value pairs from a subtree.
      */
