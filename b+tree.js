@@ -996,8 +996,6 @@ var BTree = /** @class */ (function () {
         var nextPair = target.getPairOrNextHigher(minKey, nextBuffer);
         if (nextPair !== undefined && cmp(nextPair[0], maxKey) <= 0 && cmp(nextPair[0], minKey) >= 0)
             throw new Error("insertSharedSubtree: overlapping keys detected (upper bound).");
-        // Mark the node as shared since we're reusing it
-        markNodeShared(sourceNode);
         var subtreeHeight = sourceHeight - sourceDepth;
         var targetHeight = target.height;
         if (subtreeHeight < 0)
@@ -1013,17 +1011,25 @@ var BTree = /** @class */ (function () {
             var existingMax = existingRoot.maxKey();
             if (existingMin === undefined || existingMax === undefined)
                 throw new Error("insertSharedSubtree: cannot grow root of empty target.");
-            var children = void 0;
-            if (cmp(maxKey, existingMin) < 0) {
-                children = [sourceNode, existingRoot];
+            if (cmp(maxKey, existingMin) < 0 || cmp(existingMax, minKey) < 0) {
+                markNodeShared(sourceNode);
+                target._root = cmp(maxKey, existingMin) < 0
+                    ? new BNodeInternal([sourceNode, existingRoot])
+                    : new BNodeInternal([existingRoot, sourceNode]);
+                return;
             }
-            else if (cmp(existingMax, minKey) < 0) {
-                children = [existingRoot, sourceNode];
+            if (sourceNode.isLeaf)
+                throw new Error("insertSharedSubtree: overlapping leaf cannot be decomposed further.");
+            var internalSource = sourceNode;
+            var nextDepth = sourceDepth + 1;
+            for (var i = 0; i < internalSource.children.length; i++) {
+                var child = internalSource.children[i];
+                var childMin = child.minKey();
+                var childMax = child.maxKey();
+                if (childMin === undefined || childMax === undefined)
+                    continue;
+                BTree.insertSharedSubtree(target, child, nextDepth, sourceHeight);
             }
-            else {
-                throw new Error("insertSharedSubtree: subtree range overlaps existing root.");
-            }
-            target._root = new BNodeInternal(children);
             return;
         }
         if (target._root.isLeaf)
@@ -1080,6 +1086,7 @@ var BTree = /** @class */ (function () {
             if (rightMin !== undefined && cmp(maxKey, rightMin) >= 0)
                 throw new Error("insertSharedSubtree: subtree max overlaps right sibling.");
         }
+        markNodeShared(sourceNode);
         parent.insert(insertIndex, sourceNode);
         var currentNode = parent;
         while (currentNode.keys.length > target._maxNodeSize) {
