@@ -45,6 +45,31 @@ function measure<T=void>(message: (t:T) => string, callback: () => T, minMillise
   return result;
 }
 
+function countTreeNodeStats(tree: BTree<any, any>) {
+  const root = (tree as any)._root;
+  if (!root)
+    return { total: 0, shared: 0 };
+
+  const visit = (node: any, ancestorShared: boolean): { total: number, shared: number } => {
+    if (!node)
+      return { total: 0, shared: 0 };
+    const selfShared = node.sharedSizeTag < 0 || ancestorShared;
+    let shared = selfShared ? 1 : 0;
+    let total = 1;
+    const children: any[] | undefined = node.children;
+    if (children) {
+      for (const child of children) {
+        const stats = visit(child, selfShared);
+        total += stats.total;
+        shared += stats.shared;
+      }
+    }
+    return { total, shared };
+  };
+
+  return visit(root, false);
+}
+
 console.log("Benchmark results (milliseconds with integer keys/values)");
 console.log("---------------------------------------------------------");
 
@@ -373,17 +398,21 @@ console.log("### Merge between B+ trees");
     }
 
     const preferLeft = (_k: number, v1: number, _v2: number) => v1;
-    measure(() => `Merge ${size}+${size} non-overlapping trees using merge()`, () => {
+    const mergeResult = measure(() => `Merge ${size}+${size} non-overlapping trees using merge()`, () => {
       return tree1.merge(tree2, preferLeft);
     });
+    const mergeStats = countTreeNodeStats(mergeResult);
+    console.log(`\tShared nodes (merge): ${mergeStats.shared}/${mergeStats.total}`);
 
-    measure(() => `Merge ${size}+${size} non-overlapping trees using clone+set loop (baseline)`, () => {
+    const baselineResult = measure(() => `Merge ${size}+${size} non-overlapping trees using clone+set loop (baseline)`, () => {
       const result = tree1.clone();
       tree2.forEachPair((k, v) => {
         result.set(k, v, false);
       });
       return result;
     });
+    const baselineStats = countTreeNodeStats(baselineResult);
+    console.log(`\tShared nodes (baseline): ${baselineStats.shared}/${baselineStats.total}`);
   });
 
   console.log();
@@ -399,17 +428,21 @@ console.log("### Merge between B+ trees");
     }
 
     const preferLeft = (_k: number, v1: number, _v2: number) => v1;
-    measure(() => `Merge ${size}+${size} adjacent range trees using merge()`, () => {
+    const mergeResult = measure(() => `Merge ${size}+${size} adjacent range trees using merge()`, () => {
       return tree1.merge(tree2, preferLeft);
     });
+    const mergeStats = countTreeNodeStats(mergeResult);
+    console.log(`\tShared nodes (merge): ${mergeStats.shared}/${mergeStats.total}`);
 
-    measure(() => `Merge ${size}+${size} adjacent range trees using clone+set loop (baseline)`, () => {
+    const baselineResult = measure(() => `Merge ${size}+${size} adjacent range trees using clone+set loop (baseline)`, () => {
       const result = tree1.clone();
       tree2.forEachPair((k, v) => {
         result.set(k, v, false);
       });
       return result;
     });
+    const baselineStats = countTreeNodeStats(baselineResult);
+    console.log(`\tShared nodes (baseline): ${baselineStats.shared}/${baselineStats.total}`);
   });
 
   console.log();
@@ -427,17 +460,21 @@ console.log("### Merge between B+ trees");
     }
 
     const preferLeft = (_k: number, v1: number, _v2: number) => v1;
-    measure(() => `Merge ${size*2}+${size} interleaved range trees using merge()`, () => {
+    const mergeResult = measure(() => `Merge ${size*2}+${size} interleaved range trees using merge()`, () => {
       return tree1.merge(tree2, preferLeft);
     });
+    const mergeStats = countTreeNodeStats(mergeResult);
+    console.log(`\tShared nodes (merge): ${mergeStats.shared}/${mergeStats.total}`);
 
-    measure(() => `Merge ${size*2}+${size} interleaved range trees using clone+set loop (baseline)`, () => {
+    const baselineResult = measure(() => `Merge ${size*2}+${size} interleaved range trees using clone+set loop (baseline)`, () => {
       const result = tree1.clone();
       tree2.forEachPair((k, v) => {
         result.set(k, v, false);
       });
       return result;
     });
+    const baselineStats = countTreeNodeStats(baselineResult);
+    console.log(`\tShared nodes (baseline): ${baselineStats.shared}/${baselineStats.total}`);
   });
 
   console.log();
@@ -452,9 +489,11 @@ console.log("### Merge between B+ trees");
     }
 
     const preferLeft = (_k: number, v1: number, _v2: number) => v1;
-    measure(() => `Merge ${size}+${size} completely overlapping trees (prefer left)`, () => {
+    const mergeResult = measure(() => `Merge ${size}+${size} completely overlapping trees (prefer left)`, () => {
       return tree1.merge(tree2, preferLeft);
     });
+    const mergeStats = countTreeNodeStats(mergeResult);
+    console.log(`\tShared nodes (merge): ${mergeStats.shared}/${mergeStats.total}`);
   });
 
   console.log();
@@ -476,17 +515,21 @@ console.log("### Merge between B+ trees");
     }
 
     const preferLeft = (_k: number, v1: number, _v2: number) => v1;
-    measure(() => `Merge trees with 10% overlap (${size}+${size} keys) using merge()`, () => {
+    const mergeResult = measure(() => `Merge trees with 10% overlap (${size}+${size} keys) using merge()`, () => {
       return tree1.merge(tree2, preferLeft);
     });
+    const mergeStats = countTreeNodeStats(mergeResult);
+    console.log(`\tShared nodes (merge): ${mergeStats.shared}/${mergeStats.total}`);
 
-    measure(() => `Merge trees with 10% overlap (${size}+${size} keys) using clone+set loop (baseline)`, () => {
+    const baselineResult = measure(() => `Merge trees with 10% overlap (${size}+${size} keys) using clone+set loop (baseline)`, () => {
       const result = tree1.clone();
       tree2.forEachPair((k, v) => {
         result.set(k, v, false);
       });
       return result;
     });
+    const baselineStats = countTreeNodeStats(baselineResult);
+    console.log(`\tShared nodes (baseline): ${baselineStats.shared}/${baselineStats.total}`);
   });
 
   console.log();
@@ -501,9 +544,11 @@ console.log("### Merge between B+ trees");
     }
 
     const sumValues = (_k: number, v1: number, v2: number) => v1 + v2;
-    measure(() => `Merge ${size}+${size} trees with sum operation on all overlaps`, () => {
+    const mergeResult = measure(() => `Merge ${size}+${size} trees with sum operation on all overlaps`, () => {
       return tree1.merge(tree2, sumValues);
     });
+    const mergeStats = countTreeNodeStats(mergeResult);
+    console.log(`\tShared nodes (merge): ${mergeStats.shared}/${mergeStats.total}`);
   });
 
   console.log();
@@ -518,9 +563,11 @@ console.log("### Merge between B+ trees");
     }
 
     const excludeEvens = (k: number, v1: number, _v2: number) => k % 2 === 0 ? undefined : v1;
-    measure(() => `Merge ${size}+${size} trees excluding 50% of overlapping keys`, () => {
+    const mergeResult = measure(() => `Merge ${size}+${size} trees excluding 50% of overlapping keys`, () => {
       return tree1.merge(tree2, excludeEvens);
     });
+    const mergeStats = countTreeNodeStats(mergeResult);
+    console.log(`\tShared nodes (merge): ${mergeStats.shared}/${mergeStats.total}`);
   });
 
   console.log();
@@ -540,17 +587,21 @@ console.log("### Merge between B+ trees");
     }
 
     const preferLeft = (_k: number, v1: number, _v2: number) => v1;
-    measure(() => `Merge ${tree1.size}+${tree2.size} trees with random keys using merge()`, () => {
+    const mergeResult = measure(() => `Merge ${tree1.size}+${tree2.size} trees with random keys using merge()`, () => {
       return tree1.merge(tree2, preferLeft);
     });
+    const mergeStats = countTreeNodeStats(mergeResult);
+    console.log(`\tShared nodes (merge): ${mergeStats.shared}/${mergeStats.total}`);
 
-    measure(() => `Merge ${tree1.size}+${tree2.size} trees with random keys using clone+set loop (baseline)`, () => {
+    const baselineResult = measure(() => `Merge ${tree1.size}+${tree2.size} trees with random keys using clone+set loop (baseline)`, () => {
       const result = tree1.clone();
       tree2.forEachPair((k, v) => {
         result.set(k, v, false);
       });
       return result;
     });
+    const baselineStats = countTreeNodeStats(baselineResult);
+    console.log(`\tShared nodes (baseline): ${baselineStats.shared}/${baselineStats.total}`);
   });
 
   console.log();
@@ -564,9 +615,11 @@ console.log("### Merge between B+ trees");
     }
 
     const preferLeft = (_k: number, v1: number, _v2: number) => v1;
-    measure(() => `Merge ${size}-key tree with empty tree`, () => {
+    const mergeResult = measure(() => `Merge ${size}-key tree with empty tree`, () => {
       return tree1.merge(tree2, preferLeft);
     });
+    const mergeStats = countTreeNodeStats(mergeResult);
+    console.log(`\tShared nodes (merge): ${mergeStats.shared}/${mergeStats.total}`);
   });
 
   console.log();
@@ -582,17 +635,21 @@ console.log("### Merge between B+ trees");
 
     const preferLeft = (_k: number, v1: number, _v2: number) => v1;
 
-    measure(() => `Merge ${size}+${size} overlapping trees using merge()`, () => {
+    const mergeResult = measure(() => `Merge ${size}+${size} overlapping trees using merge()`, () => {
       return tree1.merge(tree2, preferLeft);
     });
+    const mergeStats = countTreeNodeStats(mergeResult);
+    console.log(`\tShared nodes (merge): ${mergeStats.shared}/${mergeStats.total}`);
 
-    measure(() => `Merge ${size}+${size} overlapping trees using clone+set loop (baseline)`, () => {
+    const baselineResult = measure(() => `Merge ${size}+${size} overlapping trees using clone+set loop (baseline)`, () => {
       const result = tree1.clone();
       tree2.forEachPair((k, v) => {
         result.set(k, v, false); // Don't overwrite
       });
       return result;
     });
+    const baselineStats = countTreeNodeStats(baselineResult);
+    console.log(`\tShared nodes (baseline): ${baselineStats.shared}/${baselineStats.total}`);
   });
 
   console.log();
@@ -618,16 +675,20 @@ console.log("### Merge between B+ trees");
 
     const preferLeft = (_k: number, v1: number, _v2: number) => v1;
 
-    measure(() => `Merge ${tree1.size}+${tree2.size} sparse-overlap trees using merge()`, () => {
+    const mergeResult = measure(() => `Merge ${tree1.size}+${tree2.size} sparse-overlap trees using merge()`, () => {
       return tree1.merge(tree2, preferLeft);
     });
+    const mergeStats = countTreeNodeStats(mergeResult);
+    console.log(`\tShared nodes (merge): ${mergeStats.shared}/${mergeStats.total}`);
 
-    measure(() => `Merge ${tree1.size}+${tree2.size} sparse-overlap trees using clone+set loop (baseline)`, () => {
+    const baselineResult = measure(() => `Merge ${tree1.size}+${tree2.size} sparse-overlap trees using clone+set loop (baseline)`, () => {
       const result = tree1.clone();
       tree2.forEachPair((k, v) => {
         result.set(k, v, false);
       });
       return result;
     });
+    const baselineStats = countTreeNodeStats(baselineResult);
+    console.log(`\tShared nodes (baseline): ${baselineStats.shared}/${baselineStats.total}`);
   }
 }
