@@ -941,41 +941,6 @@ var BTree = /** @class */ (function () {
                 for (var i = 0; i < children.length; i++)
                     processSource(children[i], nextDepth);
             }
-            // const internal = currentNode as unknown as BNodeInternal<K,V>;
-            // const children = internal.children;
-            // for (let i = 0; i < children.length; i++)
-            //   explodeOverlaps(children[i].minKey()!);
-            // if (candidateSet.isEmpty)
-            //   return;
-            // while (true) {
-            //   enclosedCandidates.length = 0;
-            //   getEnclosedCandidates(minKey, maxKey, enclosedCandidates);
-            //   if (enclosedCandidates.length === 0)
-            //     return;
-            //   let explodedAny = false;
-            //   for (let i = 0; i < enclosedCandidates.length; i++) {
-            //     const candidate = enclosedCandidates[i];
-            //     const cRange = candidate.range;
-            //     let overlapsChild = false;
-            //     for (let j = 0; j < children.length; j++) {
-            //       const child = children[j];
-            //       const childMin = child.minKey();
-            //       const childMax = child.maxKey();
-            //       if (childMin === undefined || childMax === undefined)
-            //         continue;
-            //       if (cmp(cRange.max, childMin) >= 0 && cmp(cRange.min, childMax) <= 0) {
-            //         overlapsChild = true;
-            //         break;
-            //       }
-            //     }
-            //     if (!overlapsChild) {
-            //       explodeCandidate(candidate);
-            //       explodedAny = true;
-            //     }
-            //   }
-            //   if (!explodedAny || candidateSet.isEmpty)
-            //     break;
-            // }
         };
         processSource(result._root, 0);
         // Step 6 (first half): reuse remaining candidates via subtree sharing
@@ -1040,148 +1005,210 @@ var BTree = /** @class */ (function () {
         var nextPair = target.getPairOrNextHigher(minKey, nextBuffer);
         if (nextPair !== undefined && cmp(nextPair[0], maxKey) <= 0 && cmp(nextPair[0], minKey) >= 0)
             throw new Error("insertSharedSubtree: overlapping keys detected (upper bound).");
+        // Validate the relative heights so the reused subtree can be inserted safely.
         var subtreeHeight = sourceHeight - sourceDepth;
-        var targetHeight = target.height;
         if (subtreeHeight < 0)
             throw new Error("insertSharedSubtree: invalid subtree height.");
+        var targetHeight = target.height;
         if (subtreeHeight > targetHeight)
             throw new Error("insertSharedSubtree: subtree height exceeds target height.");
+        // Clone the root on demand so we can mutate without affecting other shared trees.
         if (nodeIsShared(target._root))
             target._root = target._root.clone();
-        var parentDepth = targetHeight - subtreeHeight - 1;
-        if (parentDepth < 0) {
-            var existingRoot = target._root;
-            var existingMin = existingRoot.minKey();
-            var existingMax = existingRoot.maxKey();
-            if (existingMin === undefined || existingMax === undefined)
-                throw new Error("insertSharedSubtree: cannot grow root of empty target.");
-            var children = void 0;
-            // TODO: maybe remove these special handlings of first/last
-            if (cmp(maxKey, existingMin) < 0) {
-                markNodeShared(sourceNode);
-                children = [sourceNode, existingRoot];
-            }
-            else if (cmp(existingMax, minKey) < 0) {
-                markNodeShared(sourceNode);
-                children = [existingRoot, sourceNode];
-            }
-            else {
-                if (!sourceNode.isLeaf) {
-                    var internal = sourceNode;
-                    for (var i = 0; i < internal.children.length; i++) {
-                        var child = internal.children[i];
-                        this.insertSharedSubtree(target, child, sourceDepth + 1, sourceHeight - 1);
-                    }
-                }
-                return;
-            }
-            target._root = new BNodeInternal(children);
-            return;
-        }
         markNodeShared(sourceNode);
-        if (target._root.isLeaf)
-            throw new Error("insertSharedSubtree: target root is unexpectedly a leaf.");
-        var nodesToRefresh = [];
-        var trackNode = function (node) {
-            for (var i = 0; i < nodesToRefresh.length; i++)
-                if (nodesToRefresh[i] === node)
-                    return;
-            nodesToRefresh.push(node);
-        };
-        var ancestors = [];
-        var ancestorIndices = [];
-        var current = target._root;
-        trackNode(current);
-        var depth = 0;
-        while (depth < parentDepth) {
-            var internal = current;
-            var childIndex = internal.indexOf(maxKey, 0, cmp);
+        // Keep the internal node metadata (max keys and subtree sizes) synchronised.
+        var refreshInternalNode = function (internal) {
             var children = internal.children;
+            var keys = internal.keys;
+            var total = 0;
+            for (var i = 0; i < children.length; i++) {
+                var child = children[i];
+                keys[i] = child.maxKey();
+                total += nodeSize(child);
+            }
+            setNodeSize(internal, total);
+        };
+        // Split a leaf at the requested index – returns the newly-created right sibling.
+        var splitLeafAt = function (leaf, index) {
+            var rightKeys = leaf.keys.splice(index);
+            var rightValues = leaf.values === undefVals ? undefVals : leaf.values.splice(index);
+            var rightNode = new BNode(rightKeys, rightValues === undefVals ? undefVals : rightValues);
+            setNodeSize(leaf, leaf.keys.length);
+            return rightNode;
+        };
+        // Split an internal node at the requested index – returns the newly-created right sibling.
+        var splitInternalAt = function (node, index) {
+            var rightChildren = node.children.splice(index);
+            node.keys.splice(index);
+            var rightNode = new BNodeInternal(rightChildren);
+            refreshInternalNode(node);
+            refreshInternalNode(rightNode);
+            return rightNode;
+        };
+        // Compute the depth at which the subtree should attach and extend the tree if needed.
+        var insertDepth = targetHeight - subtreeHeight;
+        var parentDepth = insertDepth - 1;
+        if (parentDepth < 0) {
+            // The target needs a new root layer to accommodate the taller subtree.
+            var newRoot = new BNodeInternal([target._root]);
+            target._root = newRoot;
+            targetHeight += 1;
+            insertDepth += 1;
+            parentDepth = insertDepth - 1;
+        }
+        var path = [];
+        var currentNode = target._root;
+        for (var depth = 0;; depth++) {
+            // Clone the parent and child nodes as needed so that modifications stay local.
+            var parent = currentNode;
+            if (nodeIsShared(parent)) {
+                var clonedParent = parent.clone();
+                if (depth === 0) {
+                    target._root = clonedParent;
+                }
+                else {
+                    var prev = path[depth - 1];
+                    prev.node.children[prev.childIndex] = clonedParent;
+                }
+                parent = clonedParent;
+            }
+            var childIndex = parent.indexOf(minKey, 0, cmp);
+            var children = parent.children;
             if (childIndex >= children.length)
                 childIndex = children.length - 1;
-            ancestors.push(internal);
-            ancestorIndices.push(childIndex);
             var child = children[childIndex];
             if (nodeIsShared(child)) {
                 child = child.clone();
                 children[childIndex] = child;
             }
-            current = child;
-            depth++;
-            if (depth < parentDepth) {
-                if (current.isLeaf)
-                    throw new Error("insertSharedSubtree: target path terminated before reaching required depth.");
-                trackNode(current);
-            }
+            var childMin = child.minKey();
+            var childMax = child.maxKey();
+            var needSplit = childMin !== undefined && childMax !== undefined &&
+                cmp(childMin, minKey) < 0 && cmp(childMax, maxKey) > 0;
+            // Track the path so we know where to insert and which nodes may need splitting.
+            path.push({ node: parent, childIndex: childIndex, child: child, needSplit: needSplit, depth: depth });
+            var mustDescend = (depth < insertDepth) || (needSplit && !child.isLeaf);
+            if (!mustDescend)
+                break;
+            currentNode = child;
         }
-        if (current.isLeaf)
-            throw new Error("insertSharedSubtree: found leaf at insertion level.");
-        var parent = current;
-        trackNode(parent);
-        var insertIndex = parent.indexOf(maxKey, 0, cmp);
-        var parentChildren = parent.children;
-        if (insertIndex > parentChildren.length)
-            insertIndex = parentChildren.length;
+        if (path.length === 0)
+            throw new Error("insertSharedSubtree: failed to locate insertion parent.");
+        for (var index = path.length - 1; index >= 0; index--) {
+            var entry = path[index];
+            if (!entry.needSplit)
+                continue;
+            var parent = entry.node;
+            var child = entry.child;
+            var splitLeftIndex = child.indexOf(minKey, 0, cmp);
+            if (splitLeftIndex <= 0 || splitLeftIndex >= child.keys.length)
+                throw new Error("insertSharedSubtree: invalid split position detected (left).");
+            // Trim away any portion of the child that lies strictly to the left of the subtree.
+            var middleNode = child.isLeaf
+                ? splitLeafAt(child, splitLeftIndex)
+                : splitInternalAt(child, splitLeftIndex);
+            parent.insert(entry.childIndex + 1, middleNode);
+            var targetNode = parent.children[entry.childIndex + 1];
+            var splitRightIndex = targetNode.indexOf(maxKey, 0, cmp);
+            var targetKeys = targetNode.keys;
+            while (splitRightIndex < targetKeys.length && cmp(targetKeys[splitRightIndex], maxKey) <= 0)
+                splitRightIndex++;
+            if (splitRightIndex <= 0) {
+                entry.childIndex = entry.childIndex + 1;
+                entry.child = parent.children[entry.childIndex];
+                refreshInternalNode(parent);
+                continue;
+            }
+            // Trim away any portion of the child that lies strictly to the right of the subtree.
+            if (splitRightIndex < targetKeys.length) {
+                var rightExcess = targetNode.isLeaf
+                    ? splitLeafAt(targetNode, splitRightIndex)
+                    : splitInternalAt(targetNode, splitRightIndex);
+                parent.insert(entry.childIndex + 2, rightExcess);
+            }
+            entry.childIndex = entry.childIndex + 1;
+            entry.child = parent.children[entry.childIndex];
+            refreshInternalNode(parent);
+        }
+        var parentEntryIndex = path.findIndex(function (entry) { return entry.depth === parentDepth; });
+        if (parentEntryIndex < 0)
+            throw new Error("insertSharedSubtree: failed to locate parent entry for insertion.");
+        var parentEntry = path[parentEntryIndex];
+        var parentNode = parentEntry.node;
+        var parentChildren = parentNode.children;
+        var insertIndex = 0;
+        while (insertIndex < parentChildren.length && cmp(parentChildren[insertIndex].maxKey(), minKey) < 0)
+            insertIndex++;
+        parentEntry.childIndex = insertIndex;
         if (insertIndex > 0) {
-            var left = parentChildren[insertIndex - 1];
-            if (cmp(left.maxKey(), minKey) >= 0)
+            var leftSibling = parentChildren[insertIndex - 1];
+            if (cmp(leftSibling.maxKey(), minKey) >= 0)
                 throw new Error("insertSharedSubtree: subtree min overlaps left sibling.");
         }
         if (insertIndex < parentChildren.length) {
-            var right = parentChildren[insertIndex];
-            var rightMin = right.minKey();
+            var rightSibling = parentChildren[insertIndex];
+            var rightMin = rightSibling.minKey();
             if (rightMin !== undefined && cmp(maxKey, rightMin) >= 0)
                 throw new Error("insertSharedSubtree: subtree max overlaps right sibling.");
         }
-        parent.insert(insertIndex, sourceNode);
-        var currentNode = parent;
-        while (currentNode.keys.length > target._maxNodeSize) {
-            var newRight = currentNode.splitOffRightSide();
-            trackNode(currentNode);
-            trackNode(newRight);
-            if (ancestors.length === 0) {
-                target._root = new BNodeInternal([currentNode, newRight]);
-                trackNode(target._root);
+        parentNode.insert(insertIndex, sourceNode);
+        parentEntry.child = sourceNode;
+        refreshInternalNode(parentNode);
+        // Rebuild the ancestor path so that subsequent fixing-up logic uses the latest node identities.
+        var rebuiltPath = [];
+        var buildPath = function (current, depth) {
+            if (current.isLeaf)
+                return false;
+            var internal = current;
+            if (internal === parentNode) {
+                rebuiltPath.push({ node: internal, childIndex: parentEntry.childIndex, child: parentEntry.child, needSplit: false, depth: depth });
+                return true;
+            }
+            var children = internal.children;
+            for (var i = 0; i < children.length; i++) {
+                if (buildPath(children[i], depth + 1)) {
+                    // Replace the cached child index with the matching branch in this ancestor.
+                    rebuiltPath.push({ node: internal, childIndex: i, child: children[i], needSplit: false, depth: depth });
+                    return true;
+                }
+            }
+            return false;
+        };
+        if (!buildPath(target._root, 0))
+            throw new Error("insertSharedSubtree: failed to rebuild ancestor path.");
+        rebuiltPath.reverse();
+        path.length = rebuiltPath.length;
+        for (var i = 0; i < rebuiltPath.length; i++)
+            path[i] = rebuiltPath[i];
+        parentEntryIndex = rebuiltPath.length - 1;
+        for (var i = parentEntryIndex - 1; i >= 0; i--) {
+            var ancestor = path[i];
+            // Refresh metadata on every ancestor now that the subtree is installed.
+            refreshInternalNode(ancestor.node);
+        }
+        var currentIndex = parentEntryIndex;
+        var currentInternal = parentNode;
+        while (currentInternal.keys.length > target._maxNodeSize) {
+            // Standard B+ tree split logic bubbles upward if inserting the reused subtree overflowed a node.
+            var newRight = currentInternal.splitOffRightSide();
+            refreshInternalNode(currentInternal);
+            refreshInternalNode(newRight);
+            if (currentIndex === 0) {
+                // Overflow at the root creates a brand new top-level node.
+                target._root = new BNodeInternal([currentInternal, newRight]);
+                refreshInternalNode(target._root);
                 break;
             }
-            var parentNode = ancestors.pop();
-            var parentIndex = ancestorIndices.pop();
-            if (nodeIsShared(parentNode))
-                throw new Error("insertSharedSubtree: ancestor unexpectedly shared.");
-            parentNode.children[parentIndex] = currentNode;
-            parentNode.insert(parentIndex + 1, newRight);
-            trackNode(parentNode);
-            currentNode = parentNode;
-        }
-        for (var i = nodesToRefresh.length - 1; i >= 0; i--) {
-            var node = nodesToRefresh[i];
-            if (nodeIsShared(node))
-                continue;
-            var children = node.children;
-            var keys = node.keys;
-            var size = 0;
-            for (var j = 0; j < children.length; j++) {
-                var child = children[j];
-                keys[j] = child.maxKey();
-                size += nodeSize(child);
-            }
-            setNodeSize(node, size);
-        }
-    };
-    /**
-     * Collects all key-value pairs from a subtree.
-     */
-    BTree.collectPairsHelper = function (node, pairs) {
-        if (node.isLeaf) {
-            for (var i = 0; i < node.keys.length; i++) {
-                pairs.push([node.keys[i], node.values[i]]);
-            }
-        }
-        else {
-            var internal = node;
-            for (var i = 0; i < internal.children.length; i++) {
-                BTree.collectPairsHelper(internal.children[i], pairs);
-            }
+            var upperEntry = path[currentIndex - 1];
+            var upper = upperEntry.node;
+            var idx = upper.children.indexOf(currentInternal);
+            if (idx < 0)
+                idx = upperEntry.childIndex;
+            upper.children[idx] = currentInternal;
+            upper.insert(idx + 1, newRight);
+            refreshInternalNode(upper);
+            currentInternal = upper;
+            currentIndex--;
         }
     };
     /** Gets an array filled with the contents of the tree, sorted by key */
