@@ -867,9 +867,12 @@ var BTree = /** @class */ (function () {
         var candidateSet = new BTree(undefined, compareRanges, treeB._maxNodeSize);
         // Step 4: leaves that must be merged manually
         var toMerge = [];
-        var addCandidate = function (node, depth) {
-            var min = node.minKey();
-            var max = node.maxKey();
+        var addCandidate = function (node, depth, min, max) {
+            // Only compute min/max if not provided
+            if (min === undefined)
+                min = node.minKey();
+            if (max === undefined)
+                max = node.maxKey();
             var range = { min: min, max: max };
             candidateSet.set(range, { node: node, depth: depth, range: range });
         };
@@ -884,15 +887,12 @@ var BTree = /** @class */ (function () {
             }
             var internal = node;
             var nextDepth = entry.depth + 1;
-            for (var i = 0; i < internal.children.length; i++) {
-                addCandidate(internal.children[i], nextDepth);
+            var children = internal.children;
+            for (var i = 0; i < children.length; i++) {
+                var child = children[i];
+                // Let addCandidate compute the actual min/max to ensure correctness
+                addCandidate(child, nextDepth);
             }
-        };
-        var explodeOverlaps = function (key) {
-            var keyQuery = { min: key, max: key };
-            // Keep exploding candidates until none of them overlap this key
-            for (var entry = candidateSet.get(keyQuery); entry; entry = candidateSet.get(keyQuery))
-                explodeCandidate(entry);
         };
         var getEnclosedCandidates = function (minKey, maxKey, output) {
             var lowRange = { min: minKey, max: minKey };
@@ -904,19 +904,35 @@ var BTree = /** @class */ (function () {
                     output.push(enclosedPairs[i][1]);
             }
         };
+        // Reusable buffers to avoid allocations
+        var enclosedCandidatesBuffer = [];
+        var keyQueryBuffer = { min: undefined, max: undefined };
         // Step 5: recursive traversal over M that explodes overlapping candidates
-        var processSource = function (currentNode, depth) {
+        var processSource = function (currentNode, depth, nodeMinKey, nodeMaxKey) {
             if (candidateSet.isEmpty)
                 return;
-            var minKey = currentNode.minKey();
-            explodeOverlaps(minKey);
+            // Use provided keys or compute them
+            var minKey = nodeMinKey !== undefined ? nodeMinKey : currentNode.minKey();
+            // Batch check all endpoints at once to reduce redundant lookups
             var keys = currentNode.keys;
-            for (var i = 0; i < keys.length; i++)
-                explodeOverlaps(keys[i]);
+            keyQueryBuffer.min = keyQueryBuffer.max = minKey;
+            // Check minKey first
+            var entry = candidateSet.get(keyQueryBuffer);
+            if (entry)
+                explodeCandidate(entry);
+            // Check all other keys
+            for (var i = 0; i < keys.length; i++) {
+                if (candidateSet.isEmpty)
+                    return;
+                keyQueryBuffer.min = keyQueryBuffer.max = keys[i];
+                entry = candidateSet.get(keyQueryBuffer);
+                if (entry)
+                    explodeCandidate(entry);
+            }
             if (candidateSet.isEmpty)
                 return;
-            var maxKey = currentNode.maxKey();
-            var enclosedCandidates = [];
+            var maxKey = nodeMaxKey !== undefined ? nodeMaxKey : currentNode.maxKey();
+            var enclosedCandidates = enclosedCandidatesBuffer;
             if (currentNode.isLeaf) {
                 while (true) {
                     enclosedCandidates.length = 0;
@@ -937,9 +953,13 @@ var BTree = /** @class */ (function () {
             if (enclosedCandidates.length > 0) {
                 var internal = currentNode;
                 var children = internal.children;
+                var childKeys = internal.keys;
                 var nextDepth = depth + 1;
-                for (var i = 0; i < children.length; i++)
-                    processSource(children[i], nextDepth);
+                // Process children recursively
+                for (var i = 0; i < children.length; i++) {
+                    // Pass the cached maxKey since we know keys[i] = children[i].maxKey()
+                    processSource(children[i], nextDepth, undefined, childKeys[i]);
+                }
             }
         };
         processSource(result._root, 0);
@@ -950,8 +970,42 @@ var BTree = /** @class */ (function () {
                 reusableEntries.push(entry);
             });
         }
+        // Helper to recursively collect all leaves from a subtree
+        var collectLeavesFromSubtree = function (node, depth) {
+            if (node.isLeaf) {
+                toMerge.push({ node: node, depth: depth, range: { min: node.minKey(), max: node.maxKey() } });
+            }
+            else {
+                var internal = node;
+                for (var i = 0; i < internal.children.length; i++) {
+                    collectLeavesFromSubtree(internal.children[i], depth + 1);
+                }
+            }
+        };
         for (var i = 0; i < reusableEntries.length; i++) {
             var entry = reusableEntries[i];
+            // Skip empty nodes
+            if (entry.node.keys.length === 0)
+                continue;
+            // Check if this subtree would overlap with existing keys in result
+            var minKey = entry.node.minKey();
+            var maxKey = entry.node.maxKey();
+            if (minKey === undefined || maxKey === undefined)
+                continue;
+            // Use the same overlap detection logic as insertSharedSubtree
+            var prevBuffer = [undefined, undefined];
+            var nextBuffer = [undefined, undefined];
+            var prevPair = result.getPairOrNextLower(maxKey, prevBuffer);
+            var nextPair = result.getPairOrNextHigher(minKey, nextBuffer);
+            // Check if this subtree would overlap
+            var hasOverlap = (prevPair !== undefined && cmp(prevPair[0], minKey) >= 0 && cmp(prevPair[0], maxKey) <= 0) ||
+                (nextPair !== undefined && cmp(nextPair[0], maxKey) <= 0 && cmp(nextPair[0], minKey) >= 0);
+            if (hasOverlap) {
+                // This subtree overlaps with existing keys - collect all leaves for manual merge
+                collectLeavesFromSubtree(entry.node, entry.depth);
+                continue;
+            }
+            // Safe to insert this shared subtree
             BTree.insertSharedSubtree(result, entry.node, entry.depth, sourceHeight);
         }
         // Step 6 (second half): merge leaf nodes that could not be reused
@@ -1017,16 +1071,32 @@ var BTree = /** @class */ (function () {
             target._root = target._root.clone();
         markNodeShared(sourceNode);
         // Keep the internal node metadata (max keys and subtree sizes) synchronised.
-        var refreshInternalNode = function (internal) {
+        var refreshInternalNode = function (internal, startIndex, endIndex) {
             var children = internal.children;
             var keys = internal.keys;
-            var total = 0;
-            for (var i = 0; i < children.length; i++) {
-                var child = children[i];
-                keys[i] = child.maxKey();
-                total += nodeSize(child);
+            // If no range specified, update all
+            if (startIndex === undefined || endIndex === undefined) {
+                var total = 0;
+                for (var i = 0; i < children.length; i++) {
+                    var child = children[i];
+                    keys[i] = child.maxKey();
+                    total += nodeSize(child);
+                }
+                setNodeSize(internal, total);
             }
-            setNodeSize(internal, total);
+            else {
+                // Only update specified range and recalculate total
+                for (var i = startIndex; i <= endIndex && i < children.length; i++) {
+                    var child = children[i];
+                    keys[i] = child.maxKey();
+                }
+                // Still need to recalculate total size
+                var total = 0;
+                for (var i = 0; i < children.length; i++) {
+                    total += nodeSize(children[i]);
+                }
+                setNodeSize(internal, total);
+            }
         };
         // Split a leaf at the requested index – returns the newly-created right sibling.
         var splitLeafAt = function (leaf, index) {
@@ -1059,6 +1129,10 @@ var BTree = /** @class */ (function () {
         var path = [];
         var currentNode = target._root;
         for (var depth = 0;; depth++) {
+            // Check if we've reached a leaf or the insertion depth
+            if (currentNode.isLeaf || depth >= insertDepth) {
+                break;
+            }
             // Clone the parent and child nodes as needed so that modifications stay local.
             var parent = currentNode;
             if (nodeIsShared(parent)) {
@@ -1136,51 +1210,54 @@ var BTree = /** @class */ (function () {
         var parentEntry = path[parentEntryIndex];
         var parentNode = parentEntry.node;
         var parentChildren = parentNode.children;
+        // Find the correct insertion point in the parent
         var insertIndex = 0;
         while (insertIndex < parentChildren.length && cmp(parentChildren[insertIndex].maxKey(), minKey) < 0)
             insertIndex++;
         parentEntry.childIndex = insertIndex;
         if (insertIndex > 0) {
             var leftSibling = parentChildren[insertIndex - 1];
-            if (cmp(leftSibling.maxKey(), minKey) >= 0)
+            var leftMax = leftSibling.maxKey();
+            if (leftMax !== undefined && cmp(leftMax, minKey) >= 0) {
+                // Check for true overlap - in B+trees, a key can exist in internal nodes
+                // and also be the max of a left subtree, so equality might be OK in some cases
+                // But for safety, let's treat >= as overlap
                 throw new Error("insertSharedSubtree: subtree min overlaps left sibling.");
+            }
         }
         if (insertIndex < parentChildren.length) {
             var rightSibling = parentChildren[insertIndex];
             var rightMin = rightSibling.minKey();
-            if (rightMin !== undefined && cmp(maxKey, rightMin) >= 0)
+            if (rightMin !== undefined && cmp(maxKey, rightMin) >= 0) {
+                // Check for true overlap
                 throw new Error("insertSharedSubtree: subtree max overlaps right sibling.");
+            }
         }
         parentNode.insert(insertIndex, sourceNode);
         parentEntry.child = sourceNode;
-        refreshInternalNode(parentNode);
-        // Rebuild the ancestor path so that subsequent fixing-up logic uses the latest node identities.
-        var rebuiltPath = [];
-        var buildPath = function (current, depth) {
-            if (current.isLeaf)
-                return false;
-            var internal = current;
-            if (internal === parentNode) {
-                rebuiltPath.push({ node: internal, childIndex: parentEntry.childIndex, child: parentEntry.child, needSplit: false, depth: depth });
-                return true;
-            }
-            var children = internal.children;
-            for (var i = 0; i < children.length; i++) {
-                if (buildPath(children[i], depth + 1)) {
-                    // Replace the cached child index with the matching branch in this ancestor.
-                    rebuiltPath.push({ node: internal, childIndex: i, child: children[i], needSplit: false, depth: depth });
-                    return true;
+        refreshInternalNode(parentNode, insertIndex, insertIndex);
+        // Update the path entries without rebuilding - the path structure is still valid,
+        // we just need to update the child references and indices after insertion
+        for (var i = 0; i < path.length; i++) {
+            var entry = path[i];
+            if (i < parentEntryIndex) {
+                // Ancestors of the parent - update child reference to point to the correct child
+                // after potential modifications
+                var nextEntry = path[i + 1];
+                var childIdx = entry.node.children.indexOf(nextEntry.node);
+                if (childIdx >= 0) {
+                    entry.childIndex = childIdx;
+                    entry.child = nextEntry.node;
                 }
             }
-            return false;
-        };
-        if (!buildPath(target._root, 0))
-            throw new Error("insertSharedSubtree: failed to rebuild ancestor path.");
-        rebuiltPath.reverse();
-        path.length = rebuiltPath.length;
-        for (var i = 0; i < rebuiltPath.length; i++)
-            path[i] = rebuiltPath[i];
-        parentEntryIndex = rebuiltPath.length - 1;
+            else if (i === parentEntryIndex) {
+                // The parent entry itself - already updated above
+                entry.childIndex = insertIndex;
+                entry.child = sourceNode;
+            }
+            // Keep needSplit as false for all entries after insertion
+            entry.needSplit = false;
+        }
         for (var i = parentEntryIndex - 1; i >= 0; i--) {
             var ancestor = path[i];
             // Refresh metadata on every ancestor now that the subtree is installed.

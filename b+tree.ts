@@ -979,9 +979,10 @@ export default class BTree<K=any, V=any> implements ISortedMapF<K,V>, ISortedMap
     // Step 4: leaves that must be merged manually
     const toMerge: ReuseCandidate[] = [];
 
-    const addCandidate = (node: BNode<K,V>, depth: number): void => {
-      const min = node.minKey()!;
-      const max = node.maxKey()!;
+    const addCandidate = (node: BNode<K,V>, depth: number, min?: K, max?: K): void => {
+      // Only compute min/max if not provided
+      if (min === undefined) min = node.minKey()!;
+      if (max === undefined) max = node.maxKey()!;
       const range: RangeKey = { min, max };
       candidateSet.set(range, { node, depth, range });
     };
@@ -998,17 +999,15 @@ export default class BTree<K=any, V=any> implements ISortedMapF<K,V>, ISortedMap
       }
       const internal = node as unknown as BNodeInternal<K,V>;
       const nextDepth = entry.depth + 1;
-      for (let i = 0; i < internal.children.length; i++) {
-        addCandidate(internal.children[i], nextDepth);
+      const children = internal.children;
+
+      for (let i = 0; i < children.length; i++) {
+        const child = children[i];
+        // Let addCandidate compute the actual min/max to ensure correctness
+        addCandidate(child, nextDepth);
       }
     };
 
-    const explodeOverlaps = (key: K): void => {
-      const keyQuery: RangeKey = { min: key, max: key };
-      // Keep exploding candidates until none of them overlap this key
-      for (let entry = candidateSet.get(keyQuery); entry; entry = candidateSet.get(keyQuery))
-        explodeCandidate(entry);
-    };
 
     const getEnclosedCandidates = (minKey: K, maxKey: K, output: ReuseCandidate[]): void => {
       const lowRange: RangeKey = { min: minKey, max: minKey };
@@ -1021,23 +1020,39 @@ export default class BTree<K=any, V=any> implements ISortedMapF<K,V>, ISortedMap
       }
     };
 
+    // Reusable buffers to avoid allocations
+    const enclosedCandidatesBuffer: ReuseCandidate[] = [];
+    const keyQueryBuffer: RangeKey = { min: undefined as any, max: undefined as any };
+
     // Step 5: recursive traversal over M that explodes overlapping candidates
-    const processSource = (currentNode: BNode<K,V>, depth: number): void => {
+    const processSource = (currentNode: BNode<K,V>, depth: number, nodeMinKey?: K, nodeMaxKey?: K): void => {
       if (candidateSet.isEmpty)
         return;
 
-      const minKey = currentNode.minKey()!;
-      explodeOverlaps(minKey);
+      // Use provided keys or compute them
+      const minKey = nodeMinKey !== undefined ? nodeMinKey : currentNode.minKey()!;
 
+      // Batch check all endpoints at once to reduce redundant lookups
       const keys = currentNode.keys;
-      for (let i = 0; i < keys.length; i++)
-        explodeOverlaps(keys[i]);
+      keyQueryBuffer.min = keyQueryBuffer.max = minKey;
+
+      // Check minKey first
+      let entry = candidateSet.get(keyQueryBuffer);
+      if (entry) explodeCandidate(entry);
+
+      // Check all other keys
+      for (let i = 0; i < keys.length; i++) {
+        if (candidateSet.isEmpty) return;
+        keyQueryBuffer.min = keyQueryBuffer.max = keys[i];
+        entry = candidateSet.get(keyQueryBuffer);
+        if (entry) explodeCandidate(entry);
+      }
 
       if (candidateSet.isEmpty)
         return;
 
-      const maxKey = currentNode.maxKey();
-      const enclosedCandidates: ReuseCandidate[] = [];
+      const maxKey = nodeMaxKey !== undefined ? nodeMaxKey : currentNode.maxKey();
+      const enclosedCandidates = enclosedCandidatesBuffer;
       if (currentNode.isLeaf) {
         while (true) {
           enclosedCandidates.length = 0;
@@ -1059,9 +1074,14 @@ export default class BTree<K=any, V=any> implements ISortedMapF<K,V>, ISortedMap
       if (enclosedCandidates.length > 0) {
         const internal = currentNode as unknown as BNodeInternal<K,V>;
         const children = internal.children;
+        const childKeys = internal.keys;
         const nextDepth = depth + 1;
-        for (let i = 0; i < children.length; i++)
-          processSource(children[i], nextDepth);
+
+        // Process children recursively
+        for (let i = 0; i < children.length; i++) {
+          // Pass the cached maxKey since we know keys[i] = children[i].maxKey()
+          processSource(children[i], nextDepth, undefined, childKeys[i]);
+        }
       }
     };
 
@@ -1075,8 +1095,45 @@ export default class BTree<K=any, V=any> implements ISortedMapF<K,V>, ISortedMap
       });
     }
 
+    // Helper to recursively collect all leaves from a subtree
+    const collectLeavesFromSubtree = (node: BNode<K,V>, depth: number): void => {
+      if (node.isLeaf) {
+        toMerge.push({ node, depth, range: { min: node.minKey()!, max: node.maxKey()! } });
+      } else {
+        const internal = node as unknown as BNodeInternal<K,V>;
+        for (let i = 0; i < internal.children.length; i++) {
+          collectLeavesFromSubtree(internal.children[i], depth + 1);
+        }
+      }
+    };
+
     for (let i = 0; i < reusableEntries.length; i++) {
       const entry = reusableEntries[i];
+      // Skip empty nodes
+      if (entry.node.keys.length === 0) continue;
+
+      // Check if this subtree would overlap with existing keys in result
+      const minKey = entry.node.minKey();
+      const maxKey = entry.node.maxKey();
+      if (minKey === undefined || maxKey === undefined) continue;
+
+      // Use the same overlap detection logic as insertSharedSubtree
+      const prevBuffer = [undefined as any, undefined as any] as [K,V];
+      const nextBuffer = [undefined as any, undefined as any] as [K,V];
+      const prevPair = result.getPairOrNextLower(maxKey, prevBuffer);
+      const nextPair = result.getPairOrNextHigher(minKey, nextBuffer);
+
+      // Check if this subtree would overlap
+      const hasOverlap = (prevPair !== undefined && cmp(prevPair[0], minKey) >= 0 && cmp(prevPair[0], maxKey) <= 0) ||
+                         (nextPair !== undefined && cmp(nextPair[0], maxKey) <= 0 && cmp(nextPair[0], minKey) >= 0);
+
+      if (hasOverlap) {
+        // This subtree overlaps with existing keys - collect all leaves for manual merge
+        collectLeavesFromSubtree(entry.node, entry.depth);
+        continue;
+      }
+
+      // Safe to insert this shared subtree
       BTree.insertSharedSubtree(result, entry.node, entry.depth, sourceHeight);
     }
 
@@ -1208,6 +1265,11 @@ export default class BTree<K=any, V=any> implements ISortedMapF<K,V>, ISortedMap
     let currentNode: BNode<K,V> = target._root;
 
     for (let depth = 0;; depth++) {
+      // Check if we've reached a leaf or the insertion depth
+      if (currentNode.isLeaf || depth >= insertDepth) {
+        break;
+      }
+
       // Clone the parent and child nodes as needed so that modifications stay local.
       let parent = currentNode as unknown as BNodeInternal<K,V>;
       if (nodeIsShared(parent)) {
@@ -1300,6 +1362,7 @@ export default class BTree<K=any, V=any> implements ISortedMapF<K,V>, ISortedMap
     const parentNode = parentEntry.node;
     const parentChildren = parentNode.children;
 
+    // Find the correct insertion point in the parent
     let insertIndex = 0;
     while (insertIndex < parentChildren.length && cmp(parentChildren[insertIndex].maxKey(), minKey) < 0)
       insertIndex++;
@@ -1322,35 +1385,27 @@ export default class BTree<K=any, V=any> implements ISortedMapF<K,V>, ISortedMap
     parentEntry.child = sourceNode;
     refreshInternalNode(parentNode);
 
-    // Rebuild the ancestor path so that subsequent fixing-up logic uses the latest node identities.
-    const rebuiltPath: PathEntry[] = [];
-    const buildPath = (current: BNode<K,V>, depth: number): boolean => {
-      if (current.isLeaf)
-        return false;
-      const internal = current as unknown as BNodeInternal<K,V>;
-      if (internal === parentNode) {
-        rebuiltPath.push({ node: internal, childIndex: parentEntry.childIndex, child: parentEntry.child, needSplit: false, depth });
-        return true;
-      }
-      const children = internal.children;
-      for (let i = 0; i < children.length; i++) {
-        if (buildPath(children[i], depth + 1)) {
-          // Replace the cached child index with the matching branch in this ancestor.
-          rebuiltPath.push({ node: internal, childIndex: i, child: children[i], needSplit: false, depth });
-          return true;
+    // Update the path entries without rebuilding - the path structure is still valid,
+    // we just need to update the child references and indices after insertion
+    for (let i = 0; i < path.length; i++) {
+      const entry = path[i];
+      if (i < parentEntryIndex) {
+        // Ancestors of the parent - update child reference to point to the correct child
+        // after potential modifications
+        const nextEntry = path[i + 1];
+        const childIdx = entry.node.children.indexOf(nextEntry.node);
+        if (childIdx >= 0) {
+          entry.childIndex = childIdx;
+          entry.child = nextEntry.node;
         }
+      } else if (i === parentEntryIndex) {
+        // The parent entry itself - already updated above
+        entry.childIndex = insertIndex;
+        entry.child = sourceNode;
       }
-      return false;
-    };
-
-    if (!buildPath(target._root, 0))
-      throw new Error("insertSharedSubtree: failed to rebuild ancestor path.");
-
-    rebuiltPath.reverse();
-    path.length = rebuiltPath.length;
-    for (let i = 0; i < rebuiltPath.length; i++)
-      path[i] = rebuiltPath[i];
-    parentEntryIndex = rebuiltPath.length - 1;
+      // Keep needSplit as false for all entries after insertion
+      entry.needSplit = false;
+    }
 
     for (let i = parentEntryIndex - 1; i >= 0; i--) {
       const ancestor = path[i];

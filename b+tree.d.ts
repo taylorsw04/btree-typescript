@@ -333,10 +333,6 @@ export default class BTree<K = any, V = any> implements ISortedMapF<K, V>, ISort
      * @param sourceHeight The total height of the source tree
      */
     private static insertSharedSubtree;
-    /**
-     * Collects all key-value pairs from a subtree.
-     */
-    private static collectPairsHelper;
     /** Gets an array filled with the contents of the tree, sorted by key */
     toArray(maxLength?: number): [K, V][];
     /** Gets an array of all keys, sorted */

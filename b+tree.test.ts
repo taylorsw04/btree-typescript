@@ -1510,13 +1510,13 @@ describe('BTree merge fuzz tests', () => {
   const branchingFactors = [4, 8, 16, 32];
   const seeds = [0x12345678, 0x9ABCDEF];
   const FUZZ_SETTINGS = {
-    scenarioBudget: 1,          // Increase to explore more seed/fanout combinations.
-    iterationsPerScenario: 1,   // Increase to deepen each scenario.
-    maxInsertSize: 200,         // Maximum keys inserted per iteration.
-    keyRange: 10_000,           // Range of key distribution.
-    valueRange: 1_000,          // Range of value distribution.
-    sampleChecks: 3,            // Number of random spot-checks per result.
-    timeoutMs: 10_000           // Jest timeout for the fuzz test.
+    scenarioBudget: 100,          // Increase to explore more seed/fanout combinations.
+    iterationsPerScenario: 3,   // Increase to deepen each scenario.
+    maxInsertSize: 10000,         // Maximum keys inserted per iteration.
+    keyRange: 100_000,           // Range of key distribution.
+    valueRange: 10_000,          // Range of value distribution.
+    sampleChecks: 100,            // Number of random spot-checks per result.
+    timeoutMs: 20_000           // Jest timeout for the fuzz test.
   } as const;
 
   const strategies = [
@@ -1610,7 +1610,55 @@ describe('BTree merge fuzz tests', () => {
         }
 
         const expectedArray = Array.from(expectedMap.entries()).sort((a, b) => a[0] - b[0]);
-        expect(merged.toArray()).toEqual(expectedArray);
+        try {
+          expect(merged.toArray()).toEqual(expectedArray);
+        } catch (error) {
+          const receivedArray = merged.toArray();
+          const extras: [number, number][] = [];
+          const missing: [number, number][] = [];
+          let ri = 0, ei = 0;
+          while (ri < receivedArray.length || ei < expectedArray.length) {
+            if (ri >= receivedArray.length) {
+              missing.push(expectedArray[ei++]);
+              continue;
+            }
+            if (ei >= expectedArray.length) {
+              extras.push(receivedArray[ri++]);
+              continue;
+            }
+            const [rk, rv] = receivedArray[ri];
+            const [ek, ev] = expectedArray[ei];
+            if (rk === ek) {
+              if (rv !== ev) {
+                extras.push(receivedArray[ri]);
+                missing.push(expectedArray[ei]);
+              }
+              ri++;
+              ei++;
+            } else if (rk < ek) {
+              extras.push(receivedArray[ri++]);
+            } else {
+              missing.push(expectedArray[ei++]);
+            }
+          }
+          // eslint-disable-next-line no-console
+          console.log('merge fuzz mismatch', {
+            seedBase,
+            maxNodeSize,
+            iteration,
+            size,
+            strategy: strategy.name,
+            currentSnapshot: previousSnapshot,
+            otherEntries: Array.from(otherMap.entries()).sort((a, b) => a[0] - b[0]),
+            extraItems: extras,
+            missingItems: missing
+          });
+          // eslint-disable-next-line no-console
+          console.log('received', merged.toArray());
+          // eslint-disable-next-line no-console
+          console.log('expected', expectedArray);
+          throw error;
+        }
 
         // Spot-check a few sampled keys for consistency with the Map
         const sampleCount = Math.min(FUZZ_SETTINGS.sampleChecks, expectedArray.length);
