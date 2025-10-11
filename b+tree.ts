@@ -942,27 +942,28 @@ export default class BTree<K=any, V=any> implements ISortedMapF<K,V>, ISortedMap
     const heightOther = other.height;
     let treeA: BTree<K,V> = this;
     let treeB: BTree<K,V> = other;
+    let sourceHeight: number;
+    let swapped: boolean;
     if (heightThis < heightOther || (heightThis === heightOther && sizeThis < sizeOther)) {
       treeA = other;
       treeB = this;
+      sourceHeight = heightThis;
+      swapped = true;
+    } else {
+      sourceHeight = heightOther;
+      swapped = false;
     }
-    const swapped = treeA !== this;
 
     const result = treeA.clone();
 
-    // After cloning, treeB might still be empty due to clone side-effects
-    if (nodeSize(treeB._root) === 0)
-      return result;
-
     type RangeKey = { min: K, max: K };
-    interface CandidateEntry {
+    interface ReuseCandidate {
       node: BNode<K,V>;
       depth: number;
       range: RangeKey;
     }
 
     const cmp = this._compare;
-    const sourceHeight = treeB.height;
 
     // Comparator for disjoint range keys (Step 3)
     const compareRanges = (a: RangeKey, b: RangeKey): number => {
@@ -974,9 +975,9 @@ export default class BTree<K=any, V=any> implements ISortedMapF<K,V>, ISortedMap
     };
 
     // Step 3: candidate set for reusable subtrees
-    const candidateSet = new BTree<RangeKey, CandidateEntry>(undefined, compareRanges, treeB._maxNodeSize);
+    const candidateSet = new BTree<RangeKey, ReuseCandidate>(undefined, compareRanges, treeB._maxNodeSize);
     // Step 4: leaves that must be merged manually
-    const toMerge: CandidateEntry[] = [];
+    const toMerge: ReuseCandidate[] = [];
 
     const addCandidate = (node: BNode<K,V>, depth: number): void => {
       const min = node.minKey();
@@ -987,15 +988,10 @@ export default class BTree<K=any, V=any> implements ISortedMapF<K,V>, ISortedMap
       candidateSet.set(range, { node, depth, range });
     };
 
+    // start with root as candidate
     addCandidate(treeB._root, 0);
-    if (candidateSet.isEmpty)
-      return result;
 
-    const keyQuery: RangeKey = { min: treeB._root.minKey()!, max: treeB._root.minKey()! };
-    const lowRange: RangeKey = { min: keyQuery.min, max: keyQuery.min };
-    const highRange: RangeKey = { min: keyQuery.min, max: keyQuery.min };
-
-    const explodeCandidate = (entry: CandidateEntry): void => {
+    const explodeCandidate = (entry: ReuseCandidate): void => {
       candidateSet.delete(entry.range);
       const node = entry.node;
       if (node.isLeaf) {
@@ -1012,80 +1008,94 @@ export default class BTree<K=any, V=any> implements ISortedMapF<K,V>, ISortedMap
     const explodeOverlaps = (key: K | undefined): void => {
       if (key === undefined || candidateSet.isEmpty)
         return;
-      keyQuery.min = key;
-      keyQuery.max = key;
+      const keyQuery = { min: key, max: key };
       for (let entry = candidateSet.get(keyQuery); entry; entry = candidateSet.get(keyQuery))
         explodeCandidate(entry);
     };
 
-    const hasEnclosedCandidate = (minKey: K | undefined, maxKey: K | undefined): boolean => {
-      if (candidateSet.isEmpty || minKey === undefined || maxKey === undefined)
-        return false;
-      lowRange.min = minKey;
-      lowRange.max = minKey;
-      highRange.min = maxKey;
-      highRange.max = maxKey;
+    const getEnclosedCandidates = (minKey: K, maxKey: K, output: ReuseCandidate[]): void => {
+      const lowRange: RangeKey = { min: minKey, max: minKey };
+      const highRange: RangeKey = { min: maxKey, max: maxKey };
       const enclosedPairs = candidateSet.getRange(lowRange, highRange, true);
       for (let i = 0; i < enclosedPairs.length; i++) {
         const range = enclosedPairs[i][0];
-        if (cmp(range.min, minKey) >= 0 && cmp(range.max, maxKey) <= 0)
-          return true;
+        if (cmp(range.min, minKey) > 0 && cmp(range.max, maxKey) < 0)
+          output.push(enclosedPairs[i][1]);
       }
-      return false;
     };
+
+    // Reusable buffers to avoid allocations
+    const enclosedCandidatesBuffer: ReuseCandidate[] = [];
 
     // Step 5: recursive traversal over M that explodes overlapping candidates
     const processSource = (currentNode: BNode<K,V>, depth: number): void => {
+      const minKey = currentNode.minKey()!;
+      explodeOverlaps(minKey);
+      for (let i = 0; i < currentNode.keys.length; i++) {
+        explodeOverlaps(currentNode.keys[i]);
+      }
+
       if (candidateSet.isEmpty)
         return;
 
-      const minKey = currentNode.minKey();
-      explodeOverlaps(minKey);
-
-      const keys = currentNode.keys;
-      for (let i = 0; i < keys.length; i++)
-        explodeOverlaps(keys[i]);
-
-      if (candidateSet.isEmpty || currentNode.isLeaf)
-        return;
-
       const maxKey = currentNode.maxKey();
-      if (!hasEnclosedCandidate(minKey, maxKey))
+      const enclosedCandidates = enclosedCandidatesBuffer;
+      if (currentNode.isLeaf) {
+        while (true) {
+          enclosedCandidates.length = 0;
+          getEnclosedCandidates(minKey, maxKey, enclosedCandidates);
+          if (enclosedCandidates.length === 0)
         return;
+          let explodedAny = false;
+          for (let i = 0; i < enclosedCandidates.length; i++) {
+            explodeCandidate(enclosedCandidates[i]);
+            explodedAny = true;
+          }
+          if (!explodedAny || candidateSet.isEmpty)
+            return;
+        }
+      }
 
+      enclosedCandidates.length = 0;
+      getEnclosedCandidates(minKey, maxKey, enclosedCandidates);
+      if (enclosedCandidates.length > 0) {
       const internal = currentNode as unknown as BNodeInternal<K,V>;
+        const children = internal.children;
+        const childKeys = internal.keys;
       const nextDepth = depth + 1;
-      for (let i = 0; i < internal.children.length; i++)
-        processSource(internal.children[i], nextDepth);
+
+        // Process children recursively
+        for (let i = 0; i < children.length; i++) {
+          // Pass the cached maxKey since we know keys[i] = children[i].maxKey()
+          processSource(children[i], nextDepth);
+        }
+      }
     };
 
     processSource(result._root, 0);
 
     // Step 6 (first half): reuse remaining candidates via subtree sharing
-    const reusableEntries: CandidateEntry[] = [];
+    const reusableEntries: ReuseCandidate[] = [];
     if (!candidateSet.isEmpty) {
       candidateSet.forEachPair((range, entry) => {
         reusableEntries.push(entry);
       });
     }
 
-    for (let i = 0; i < reusableEntries.length; i++) {
-      const entry = reusableEntries[i];
+    for (const entry of reusableEntries) {
       BTree.insertSharedSubtree(result, entry.node, entry.depth, sourceHeight);
     }
 
     // Step 6 (second half): merge leaf nodes that could not be reused
-    const existingPairBuffer: [K,V] = [undefined as any, undefined as any];
     for (let i = 0; i < toMerge.length; i++) {
       const entry = toMerge[i];
       const leaf = entry.node;
       const values = leaf.values;
       for (let j = 0; j < leaf.keys.length; j++) {
         const key = leaf.keys[j];
-        const leafValue = values === undefVals ? undefined : values[j];
-        const existingPair = result.getPairOrNextLower(key, existingPairBuffer);
-        if (existingPair !== undefined && cmp(existingPair[0], key) === 0) {
-          const existingValue = existingPair[1];
+        const leafValue = values[j];
+        const existingValue = result.get(key);
+        if (existingValue !== undefined) {
           const leftValue = swapped ? leafValue : existingValue;
           const rightValue = swapped ? existingValue : leafValue;
           const mergedValue = merge(key, leftValue as V, rightValue as V);

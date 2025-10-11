@@ -841,17 +841,20 @@ var BTree = /** @class */ (function () {
         var heightOther = other.height;
         var treeA = this;
         var treeB = other;
+        var sourceHeight;
+        var swapped;
         if (heightThis < heightOther || (heightThis === heightOther && sizeThis < sizeOther)) {
             treeA = other;
             treeB = this;
+            sourceHeight = heightThis;
+            swapped = true;
         }
-        var swapped = treeA !== this;
+        else {
+            sourceHeight = heightOther;
+            swapped = false;
+        }
         var result = treeA.clone();
-        // After cloning, treeB might still be empty due to clone side-effects
-        if (nodeSize(treeB._root) === 0)
-            return result;
         var cmp = this._compare;
-        var sourceHeight = treeB.height;
         // Comparator for disjoint range keys (Step 3)
         var compareRanges = function (a, b) {
             if (cmp(a.max, b.min) < 0)
@@ -872,12 +875,8 @@ var BTree = /** @class */ (function () {
             var range = { min: min, max: max };
             candidateSet.set(range, { node: node, depth: depth, range: range });
         };
+        // start with root as candidate
         addCandidate(treeB._root, 0);
-        if (candidateSet.isEmpty)
-            return result;
-        var keyQuery = { min: treeB._root.minKey(), max: treeB._root.minKey() };
-        var lowRange = { min: keyQuery.min, max: keyQuery.min };
-        var highRange = { min: keyQuery.min, max: keyQuery.min };
         var explodeCandidate = function (entry) {
             candidateSet.delete(entry.range);
             var node = entry.node;
@@ -894,44 +893,61 @@ var BTree = /** @class */ (function () {
         var explodeOverlaps = function (key) {
             if (key === undefined || candidateSet.isEmpty)
                 return;
-            keyQuery.min = key;
-            keyQuery.max = key;
+            var keyQuery = { min: key, max: key };
             for (var entry = candidateSet.get(keyQuery); entry; entry = candidateSet.get(keyQuery))
                 explodeCandidate(entry);
         };
-        var hasEnclosedCandidate = function (minKey, maxKey) {
-            if (candidateSet.isEmpty || minKey === undefined || maxKey === undefined)
-                return false;
-            lowRange.min = minKey;
-            lowRange.max = minKey;
-            highRange.min = maxKey;
-            highRange.max = maxKey;
+        var getEnclosedCandidates = function (minKey, maxKey, output) {
+            var lowRange = { min: minKey, max: minKey };
+            var highRange = { min: maxKey, max: maxKey };
             var enclosedPairs = candidateSet.getRange(lowRange, highRange, true);
             for (var i = 0; i < enclosedPairs.length; i++) {
                 var range = enclosedPairs[i][0];
-                if (cmp(range.min, minKey) >= 0 && cmp(range.max, maxKey) <= 0)
-                    return true;
+                if (cmp(range.min, minKey) > 0 && cmp(range.max, maxKey) < 0)
+                    output.push(enclosedPairs[i][1]);
             }
-            return false;
         };
+        // Reusable buffers to avoid allocations
+        var enclosedCandidatesBuffer = [];
         // Step 5: recursive traversal over M that explodes overlapping candidates
         var processSource = function (currentNode, depth) {
-            if (candidateSet.isEmpty)
-                return;
             var minKey = currentNode.minKey();
             explodeOverlaps(minKey);
-            var keys = currentNode.keys;
-            for (var i = 0; i < keys.length; i++)
-                explodeOverlaps(keys[i]);
-            if (candidateSet.isEmpty || currentNode.isLeaf)
+            for (var i = 0; i < currentNode.keys.length; i++) {
+                explodeOverlaps(currentNode.keys[i]);
+            }
+            if (candidateSet.isEmpty)
                 return;
             var maxKey = currentNode.maxKey();
-            if (!hasEnclosedCandidate(minKey, maxKey))
-                return;
-            var internal = currentNode;
-            var nextDepth = depth + 1;
-            for (var i = 0; i < internal.children.length; i++)
-                processSource(internal.children[i], nextDepth);
+            var enclosedCandidates = enclosedCandidatesBuffer;
+            if (currentNode.isLeaf) {
+                while (true) {
+                    enclosedCandidates.length = 0;
+                    getEnclosedCandidates(minKey, maxKey, enclosedCandidates);
+                    if (enclosedCandidates.length === 0)
+                        return;
+                    var explodedAny = false;
+                    for (var i = 0; i < enclosedCandidates.length; i++) {
+                        explodeCandidate(enclosedCandidates[i]);
+                        explodedAny = true;
+                    }
+                    if (!explodedAny || candidateSet.isEmpty)
+                        return;
+                }
+            }
+            enclosedCandidates.length = 0;
+            getEnclosedCandidates(minKey, maxKey, enclosedCandidates);
+            if (enclosedCandidates.length > 0) {
+                var internal = currentNode;
+                var children = internal.children;
+                var childKeys = internal.keys;
+                var nextDepth = depth + 1;
+                // Process children recursively
+                for (var i = 0; i < children.length; i++) {
+                    // Pass the cached maxKey since we know keys[i] = children[i].maxKey()
+                    processSource(children[i], nextDepth);
+                }
+            }
         };
         processSource(result._root, 0);
         // Step 6 (first half): reuse remaining candidates via subtree sharing
@@ -941,22 +957,20 @@ var BTree = /** @class */ (function () {
                 reusableEntries.push(entry);
             });
         }
-        for (var i = 0; i < reusableEntries.length; i++) {
-            var entry = reusableEntries[i];
+        for (var _i = 0, reusableEntries_1 = reusableEntries; _i < reusableEntries_1.length; _i++) {
+            var entry = reusableEntries_1[_i];
             BTree.insertSharedSubtree(result, entry.node, entry.depth, sourceHeight);
         }
         // Step 6 (second half): merge leaf nodes that could not be reused
-        var existingPairBuffer = [undefined, undefined];
         for (var i = 0; i < toMerge.length; i++) {
             var entry = toMerge[i];
             var leaf = entry.node;
             var values = leaf.values;
             for (var j = 0; j < leaf.keys.length; j++) {
                 var key = leaf.keys[j];
-                var leafValue = values === undefVals ? undefined : values[j];
-                var existingPair = result.getPairOrNextLower(key, existingPairBuffer);
-                if (existingPair !== undefined && cmp(existingPair[0], key) === 0) {
-                    var existingValue = existingPair[1];
+                var leafValue = values[j];
+                var existingValue = result.get(key);
+                if (existingValue !== undefined) {
                     var leftValue = swapped ? leafValue : existingValue;
                     var rightValue = swapped ? existingValue : leafValue;
                     var mergedValue = merge(key, leftValue, rightValue);
