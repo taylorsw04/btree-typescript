@@ -1130,68 +1130,7 @@ export default class BTree<K=any, V=any> implements ISortedMapF<K,V>, ISortedMap
     sourceDepth: number,
     sourceHeight: number
   ): void {
-    // Mark the node as shared since we're reusing it
-    markNodeShared(sourceNode);
-
-    // Calculate the height of the subtree rooted at sourceNode
-    const subtreeHeight = sourceHeight - sourceDepth;
-    const targetHeight = target.height;
-    const cmp = target._compare;
-
-    check(subtreeHeight <= targetHeight, "insertSharedSubtree called with taller source subtree");
-
-    // Case 2: subtreeHeight === targetHeight
-    // Heights match - can create new root combining both
-    if (subtreeHeight === targetHeight) {
-      const sourceMinKey = sourceNode.minKey()!;
-      const sourceMaxKey = sourceNode.maxKey()!;
-      const targetMinKey = target._root.minKey()!;
-      const targetMaxKey = target._root.maxKey()!;
-
-      // Only optimize if source is entirely before or entirely after target
-      const sourceBeforeTarget = cmp(sourceMaxKey, targetMinKey) < 0;
-      const sourceAfterTarget = cmp(sourceMinKey, targetMaxKey) > 0;
-
-      if (sourceBeforeTarget) {
-        target._root = new BNodeInternal<K,V>([sourceNode, target._root]);
-        return;
-      } else if (sourceAfterTarget) {
-        target._root = new BNodeInternal<K,V>([target._root, sourceNode]);
-        return;
-      }
-      // If interleaved, fall through to key-by-key insertion
-    }
-    const targetDepth = Math.max(0, targetHeight - subtreeHeight - 1);
-
-    // Clone root if shared
-    if (nodeIsShared(target._root)) {
-      target._root = target._root.clone();
-    }
-
-    // Walk down and insert at target depth
-    const result = BTree.insertNodeAtDepth(target, target._root, sourceNode, targetDepth, 0);
-
-    if (result === false) {
-      if (sourceNode.isLeaf) {
-        const pairs: [K, V][] = [];
-        BTree.collectPairsHelper(sourceNode, pairs);
-        for (let i = 0; i < pairs.length; i++) {
-          target.set(pairs[i][0], pairs[i][1]);
-        }
-      } else {
-        const internal = sourceNode as any as BNodeInternal<K,V>;
-        for (let i = 0; i < internal.children.length; i++) {
-          BTree.insertSharedSubtree(target, internal.children[i], sourceDepth + 1, sourceHeight);
-        }
-      }
-      return;
-    }
-
-    // Handle root split
-    if (result !== true) {
-      target._root = new BNodeInternal<K,V>([target._root, result]);
-    }
-
+    // TODO: use new unzip method on target at k=sourceNode.minKey(), then insert sourceNode at depth into target.
   }
 
   /**
