@@ -345,17 +345,17 @@ export default class BTree<K = any, V = any> implements ISortedMapF<K, V>, ISort
      * @returns The zipper edges and gap location.
      */
     private unzip;
-    private _descendToLeaf;
+    private getLeafContaining;
     private _nodeAtDepthOnRoute;
-    private _collectEdgeDown;
-    private _splitLeafAt;
-    private _splitInternalAtCut;
+    private collectZipperPath;
+    private splitLeafAt;
+    private splitInternalAt;
     private _cascadeSplitUp;
     private _fixupZipperEdge;
     private _ensureWritableInternalInParent;
     private _parentOfNode;
     private _indexOfChild;
-    private _setSizeFromChildren;
+    private refreshSize;
     private _recomputeInternalSizeFromChildren;
     private _addSizeToAncestors;
     /** Gets an array filled with the contents of the tree, sorted by key */

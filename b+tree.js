@@ -1041,40 +1041,36 @@ var BTree = /** @class */ (function () {
      * @returns The zipper edges and gap location.
      */
     BTree.prototype.unzip = function (k, D) {
-        if (D < 0 || D > this.height)
-            throw new Error("unzip: invalid depth");
-        // 0) Reject duplicate key.
-        {
-            var _a = this._descendToLeaf(k), leaf = _a.leaf, pos = _a.pos;
-            if (pos >= 0)
-                throw new Error("unzip: key already exists");
-            // 1) Leaf boundary: split leaf only if k would land in the middle.
-            var ins = ~pos;
-            if (ins !== 0 && ins !== leaf.keys.length) {
-                var parent = this._parentOfNode(leaf);
-                if (parent)
-                    parent = this._ensureWritableInternalInParent(parent);
-                var _b = this._splitLeafAt(leaf, ins), L = _b.L, R = _b.R;
-                if (parent) {
-                    var j = this._indexOfChild(parent, leaf);
-                    parent.children[j] = L;
-                    parent.keys[j] = L.maxKey();
-                    parent.insert(j + 1, R);
-                    // cached sizes
-                    setNodeSize(L, L.keys.length);
-                    setNodeSize(R, R.keys.length);
-                    this._recomputeInternalSizeFromChildren(parent);
-                    if (parent.keys.length > this._maxNodeSize)
-                        this._cascadeSplitUp(parent);
-                }
-                else {
-                    // leaf was root
-                    var newRoot = new BNodeInternal([L, R]);
-                    setNodeSize(L, L.keys.length);
-                    setNodeSize(R, R.keys.length);
-                    this._setSizeFromChildren(newRoot);
-                    this._root = newRoot;
-                }
+        check(D >= 0 && D <= this.height, "unzip: invalid depth");
+        var _a = this.getLeafContaining(k), leaf = _a.leaf, pos = _a.pos;
+        if (pos >= 0)
+            throw new Error("unzip: key already exists");
+        // 1) Leaf boundary: split leaf only if k would land in the middle.
+        var ins = ~pos;
+        if (ins !== 0 && ins !== leaf.keys.length) {
+            var parent = this._parentOfNode(leaf);
+            if (parent)
+                parent = this._ensureWritableInternalInParent(parent);
+            var _b = this.splitLeafAt(leaf, ins), L = _b.left, R = _b.right;
+            if (parent) {
+                var j = this._indexOfChild(parent, leaf);
+                parent.children[j] = L;
+                parent.keys[j] = L.maxKey();
+                parent.insert(j + 1, R);
+                // cached sizes
+                setNodeSize(L, L.keys.length);
+                setNodeSize(R, R.keys.length);
+                this._recomputeInternalSizeFromChildren(parent);
+                if (parent.keys.length > this._maxNodeSize)
+                    this._cascadeSplitUp(parent);
+            }
+            else {
+                // leaf was root
+                var newRoot = new BNodeInternal([L, R]);
+                setNodeSize(L, L.keys.length);
+                setNodeSize(R, R.keys.length);
+                this.refreshSize(newRoot);
+                this._root = newRoot;
             }
         }
         // 2) Ascend from the (possibly new) leaf’s parent up to and including depth D.
@@ -1088,21 +1084,21 @@ var BTree = /** @class */ (function () {
             if (i === 0 || i === cur.children.length - 1)
                 continue; // already extreme at this level
             // Need an exact boundary inside cur at cut=i
-            var _d = this._splitInternalAtCut(cur, i), L = _d.L, R = _d.R;
+            var _d = this.splitInternalAt(cur, i), left = _d.left, right = _d.right;
             if (parent) {
                 var writableParent = parent;
                 writableParent = this._ensureWritableInternalInParent(writableParent);
                 var slot = this._indexOfChild(writableParent, cur);
-                writableParent.children[slot] = L;
-                writableParent.keys[slot] = L.maxKey();
-                writableParent.insert(slot + 1, R);
+                writableParent.children[slot] = left;
+                writableParent.keys[slot] = left.maxKey();
+                writableParent.insert(slot + 1, right);
                 this._recomputeInternalSizeFromChildren(writableParent);
                 if (writableParent.keys.length > this._maxNodeSize)
                     this._cascadeSplitUp(writableParent);
             }
             else {
-                var newRoot = new BNodeInternal([L, R]);
-                this._setSizeFromChildren(newRoot);
+                var newRoot = new BNodeInternal([left, right]);
+                this.refreshSize(newRoot);
                 this._root = newRoot;
             }
         }
@@ -1113,33 +1109,33 @@ var BTree = /** @class */ (function () {
         var leftStart;
         var rightStart;
         if (nodeD.isLeaf) {
-            var leaf = nodeD;
-            var posLeaf = leaf.indexOf(k, -1, this._compare);
+            var leaf_1 = nodeD;
+            var posLeaf = leaf_1.indexOf(k, -1, this._compare);
             var insLeaf = ~posLeaf;
-            check(insLeaf === 0 || insLeaf === leaf.keys.length, "unzip: leaf was not aligned");
+            check(insLeaf === 0 || insLeaf === leaf_1.keys.length, "unzip: leaf was not aligned");
             gapParent = parentD;
             if (gapParent) {
-                var childIdx = this._indexOfChild(gapParent, leaf);
+                var childIdx = this._indexOfChild(gapParent, leaf_1);
                 if (insLeaf === 0) {
                     gapIndex = childIdx;
-                    rightStart = leaf;
+                    rightStart = leaf_1;
                     leftStart = childIdx > 0 ? gapParent.children[childIdx - 1] : undefined;
                 }
                 else {
                     gapIndex = childIdx + 1;
-                    leftStart = leaf;
+                    leftStart = leaf_1;
                     rightStart = childIdx + 1 < gapParent.children.length ? gapParent.children[childIdx + 1] : undefined;
                 }
             }
             else {
                 if (insLeaf === 0) {
                     gapIndex = 0;
-                    rightStart = leaf;
+                    rightStart = leaf_1;
                     leftStart = undefined;
                 }
                 else {
                     gapIndex = 1;
-                    leftStart = leaf;
+                    leftStart = leaf_1;
                     rightStart = undefined;
                 }
             }
@@ -1186,20 +1182,18 @@ var BTree = /** @class */ (function () {
                 rightStart = p.children[rightIdx];
             }
         }
-        var leftZip = leftStart ? this._collectEdgeDown(leftStart, /*goLast*/ true) : [];
-        var rightZip = rightStart ? this._collectEdgeDown(rightStart, /*goLast*/ false) : [];
+        var leftZip = leftStart ? this.collectZipperPath(leftStart, /*goLast*/ true) : [];
+        var rightZip = rightStart ? this.collectZipperPath(rightStart, /*goLast*/ false) : [];
         return { leftZip: leftZip, rightZip: rightZip, gapParent: gapParent, gapIndex: gapIndex };
     };
-    BTree.prototype._descendToLeaf = function (k) {
-        var x = this._root;
-        while (!x.isLeaf) {
-            var xi = x;
-            var i = Math.min(xi.indexOf(k, 0, this._compare), xi.children.length - 1);
-            x = xi.children[i];
+    BTree.prototype.getLeafContaining = function (k) {
+        var cur = this._root;
+        while (!cur.isLeaf) {
+            var curInternal = cur;
+            var i = Math.min(curInternal.indexOf(k, 0, this._compare), curInternal.children.length - 1);
+            cur = curInternal.children[i];
         }
-        var leaf = x;
-        var pos = leaf.indexOf(k, -1, this._compare);
-        return { leaf: leaf, pos: pos };
+        return { leaf: cur, pos: cur.indexOf(k, -1, this._compare) };
     };
     BTree.prototype._nodeAtDepthOnRoute = function (k, depth) {
         var x = this._root;
@@ -1212,40 +1206,38 @@ var BTree = /** @class */ (function () {
         }
         return { node: x, parent: parent };
     };
-    BTree.prototype._collectEdgeDown = function (start, goLast) {
-        var out = [start];
-        var n = start;
-        while (!n.isLeaf) {
-            var ni = n;
-            n = ni.children[goLast ? ni.children.length - 1 : 0];
-            out.push(n);
+    BTree.prototype.collectZipperPath = function (start, leftEdge) {
+        var edge = [start];
+        var cur = start;
+        while (!cur.isLeaf) {
+            var curInternal = cur;
+            cur = curInternal.children[leftEdge ? curInternal.children.length - 1 : 0];
+            edge.push(cur);
         }
-        return out;
+        return edge;
     };
-    BTree.prototype._splitLeafAt = function (leaf, pos) {
-        var vals = leaf.reifyValues();
-        var L = new BNode(leaf.keys.slice(0, pos), vals.slice(0, pos));
-        var R = new BNode(leaf.keys.slice(pos), vals.slice(pos));
-        return { L: L, R: R };
+    BTree.prototype.splitLeafAt = function (leaf, index) {
+        var vals = leaf.reifyValues(); // todo: needed?
+        var left = new BNode(leaf.keys.slice(0, index), vals.slice(0, index));
+        var right = new BNode(leaf.keys.slice(index), vals.slice(index));
+        return { left: left, right: right };
     };
-    BTree.prototype._splitInternalAtCut = function (n, cut) {
-        var L = new BNodeInternal(n.children.slice(0, cut));
-        var R = new BNodeInternal(n.children.slice(cut));
-        this._setSizeFromChildren(L);
-        this._setSizeFromChildren(R);
-        return { L: L, R: R };
+    BTree.prototype.splitInternalAt = function (n, index) {
+        var left = new BNodeInternal(n.children.slice(0, index));
+        var right = new BNodeInternal(n.children.slice(index));
+        return { left: left, right: right };
     };
     BTree.prototype._cascadeSplitUp = function (node) {
         var cur = node;
         while (cur && cur.keys.length > this._maxNodeSize) {
             // writable cur is already ensured by callers
             var right = cur.splitOffRightSide();
-            this._setSizeFromChildren(cur);
-            this._setSizeFromChildren(right);
+            this.refreshSize(cur);
+            this.refreshSize(right);
             var gp = this._parentOfNode(cur);
             if (!gp) {
                 var newRoot = new BNodeInternal([cur, right]);
-                this._setSizeFromChildren(newRoot);
+                this.refreshSize(newRoot);
                 this._root = newRoot;
                 return;
             }
@@ -1301,8 +1293,8 @@ var BTree = /** @class */ (function () {
                     fromLeft
                         ? node.takeFromLeft(sib)
                         : node.takeFromRight(sib);
-                    _this._setSizeFromChildren(node);
-                    _this._setSizeFromChildren(sib);
+                    _this.refreshSize(node);
+                    _this.refreshSize(sib);
                 }
                 else {
                     fromLeft ? node.takeFromLeft(sib)
@@ -1333,7 +1325,7 @@ var BTree = /** @class */ (function () {
                     }
                     if (L.children) {
                         L.mergeSibling(node, MAX);
-                        this_1._setSizeFromChildren(L);
+                        this_1.refreshSize(L);
                     }
                     else {
                         L.mergeSibling(node, MAX);
@@ -1351,7 +1343,7 @@ var BTree = /** @class */ (function () {
                     }
                     if (node.children) {
                         node.mergeSibling(R, MAX);
-                        this_1._setSizeFromChildren(node);
+                        this_1.refreshSize(node);
                     }
                     else {
                         node.mergeSibling(R, MAX);
@@ -1407,7 +1399,7 @@ var BTree = /** @class */ (function () {
                 return i;
         return -1;
     };
-    BTree.prototype._setSizeFromChildren = function (n) {
+    BTree.prototype.refreshSize = function (n) {
         var s = 0;
         for (var _i = 0, _a = n.children; _i < _a.length; _i++) {
             var c = _a[_i];
@@ -1419,7 +1411,7 @@ var BTree = /** @class */ (function () {
         // Recompute both keys and cached size from children.
         for (var i = 0; i < n.children.length; i++)
             n.keys[i] = n.children[i].maxKey();
-        this._setSizeFromChildren(n);
+        this.refreshSize(n);
     };
     BTree.prototype._addSizeToAncestors = function (start, delta) {
         var child = start;
