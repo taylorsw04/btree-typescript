@@ -1176,35 +1176,32 @@ export default class BTree<K=any, V=any> implements ISortedMapF<K,V>, ISortedMap
    * @returns The zipper edges and gap location.
    */
   private unzip(k: K, D: number): UnzipResult<K, V> {
-    if (D < 0 || D > this.height) throw new Error("unzip: invalid depth");
-    // 0) Reject duplicate key.
-    {
-      const { leaf, pos } = this._descendToLeaf(k);
-      if (pos >= 0) throw new Error("unzip: key already exists");
-      // 1) Leaf boundary: split leaf only if k would land in the middle.
-      const ins = ~pos;
-      if (ins !== 0 && ins !== leaf.keys.length) {
-        let parent = this._parentOfNode(leaf);
-        if (parent) parent = this._ensureWritableInternalInParent(parent);
-        const { L, R } = this._splitLeafAt(leaf, ins);
-        if (parent) {
-          const j = this._indexOfChild(parent, leaf);
-          parent.children[j] = L;
-          parent.keys[j]     = L.maxKey();
-          parent.insert(j + 1, R);
-          // cached sizes
-          setNodeSize(L, L.keys.length);
-          setNodeSize(R, R.keys.length);
-          this._recomputeInternalSizeFromChildren(parent);
-          if (parent.keys.length > this._maxNodeSize) this._cascadeSplitUp(parent);
-        } else {
-          // leaf was root
-          const newRoot = new BNodeInternal<K, V>([L, R]);
-          setNodeSize(L, L.keys.length);
-          setNodeSize(R, R.keys.length);
-          this._setSizeFromChildren(newRoot);
-          this._root = newRoot;
-        }
+    check(D >= 0 && D <= this.height, "unzip: invalid depth");
+    const { leaf, pos } = this.getLeafContaining(k);
+    if (pos >= 0) throw new Error("unzip: key already exists");
+    // 1) Leaf boundary: split leaf only if k would land in the middle.
+    const ins = ~pos;
+    if (ins !== 0 && ins !== leaf.keys.length) {
+      let parent = this._parentOfNode(leaf);
+      if (parent) parent = this._ensureWritableInternalInParent(parent);
+      const { left: L, right: R } = this.splitLeafAt(leaf, ins);
+      if (parent) {
+        const j = this._indexOfChild(parent, leaf);
+        parent.children[j] = L;
+        parent.keys[j]     = L.maxKey();
+        parent.insert(j + 1, R);
+        // cached sizes
+        setNodeSize(L, L.keys.length);
+        setNodeSize(R, R.keys.length);
+        this._recomputeInternalSizeFromChildren(parent);
+        if (parent.keys.length > this._maxNodeSize) this._cascadeSplitUp(parent);
+      } else {
+        // leaf was root
+        const newRoot = new BNodeInternal<K, V>([L, R]);
+        setNodeSize(L, L.keys.length);
+        setNodeSize(R, R.keys.length);
+        this.refreshSize(newRoot);
+        this._root = newRoot;
       }
     }
 
@@ -1219,19 +1216,19 @@ export default class BTree<K=any, V=any> implements ISortedMapF<K,V>, ISortedMap
       if (i === 0 || i === cur.children.length - 1) continue; // already extreme at this level
 
       // Need an exact boundary inside cur at cut=i
-      const { L, R } = this._splitInternalAtCut(cur, i);
+      const { left, right } = this.splitInternalAt(cur, i);
       if (parent) {
         let writableParent = parent;
         writableParent = this._ensureWritableInternalInParent(writableParent);
         const slot = this._indexOfChild(writableParent, cur);
-        writableParent.children[slot] = L;
-        writableParent.keys[slot]     = L.maxKey();
-        writableParent.insert(slot + 1, R);
+        writableParent.children[slot] = left;
+        writableParent.keys[slot]     = left.maxKey();
+        writableParent.insert(slot + 1, right);
         this._recomputeInternalSizeFromChildren(writableParent);
         if (writableParent.keys.length > this._maxNodeSize) this._cascadeSplitUp(writableParent);
       } else {
-        const newRoot = new BNodeInternal<K, V>([L, R]);
-        this._setSizeFromChildren(newRoot);
+        const newRoot = new BNodeInternal<K, V>([left, right]);
+        this.refreshSize(newRoot);
         this._root = newRoot;
       }
     }
@@ -1312,22 +1309,20 @@ export default class BTree<K=any, V=any> implements ISortedMapF<K,V>, ISortedMap
       }
     }
 
-    const leftZip  = leftStart  ? this._collectEdgeDown(leftStart,  /*goLast*/ true)  : [];
-    const rightZip = rightStart ? this._collectEdgeDown(rightStart, /*goLast*/ false) : [];
+    const leftZip  = leftStart  ? this.collectZipperPath(leftStart,  /*goLast*/ true)  : [];
+    const rightZip = rightStart ? this.collectZipperPath(rightStart, /*goLast*/ false) : [];
 
     return { leftZip, rightZip, gapParent, gapIndex };
   }
 
-  private _descendToLeaf(k: K): { leaf: BNode<K, V>, pos: number } {
-    let x = this._root as BNode<K, V>;
-    while (!x.isLeaf) {
-      const xi = x as unknown as BNodeInternal<K, V>;
-      const i = Math.min(xi.indexOf(k, 0, this._compare), xi.children.length - 1);
-      x = xi.children[i];
+  private getLeafContaining(k: K): { leaf: BNode<K, V>, pos: number } {
+    let cur = this._root;
+    while (!cur.isLeaf) {
+      const curInternal = cur as unknown as BNodeInternal<K, V>;
+      const i = Math.min(curInternal.indexOf(k, 0, this._compare), curInternal.children.length - 1);
+      cur = curInternal.children[i];
     }
-    const leaf = x;
-    const pos  = leaf.indexOf(k, -1, this._compare);
-    return { leaf, pos };
+    return { leaf: cur, pos: cur.indexOf(k, -1, this._compare) };
   }
 
   private _nodeAtDepthOnRoute(k: K, depth: number): { node: BNode<K, V>, parent?: BNodeInternal<K, V> } {
@@ -1342,30 +1337,28 @@ export default class BTree<K=any, V=any> implements ISortedMapF<K,V>, ISortedMap
     return { node: x, parent };
   }
 
-  private _collectEdgeDown(start: BNode<K, V>, goLast: boolean): BNode<K, V>[] {
-    const out: BNode<K, V>[] = [start];
-    let n: BNode<K, V> = start;
-    while (!n.isLeaf) {
-      const ni = n as unknown as BNodeInternal<K, V>;
-      n = ni.children[goLast ? ni.children.length - 1 : 0];
-      out.push(n);
+  private collectZipperPath(start: BNode<K, V>, leftEdge: boolean): BNode<K, V>[] {
+    const edge: BNode<K, V>[] = [start];
+    let cur: BNode<K, V> = start;
+    while (!cur.isLeaf) {
+      const curInternal = cur as unknown as BNodeInternal<K, V>;
+      cur = curInternal.children[leftEdge ? curInternal.children.length - 1 : 0];
+      edge.push(cur);
     }
-    return out;
+    return edge;
   }
 
-  private _splitLeafAt(leaf: BNode<K, V>, pos: number): { L: BNode<K, V>, R: BNode<K, V> } {
-    const vals = leaf.reifyValues();
-    const L = new BNode<K, V>(leaf.keys.slice(0, pos), vals.slice(0, pos));
-    const R = new BNode<K, V>(leaf.keys.slice(pos),   vals.slice(pos));
-    return { L, R };
+  private splitLeafAt(leaf: BNode<K, V>, index: number): { left: BNode<K, V>, right: BNode<K, V> } {
+    const vals = leaf.reifyValues(); // todo: needed?
+    const left = new BNode<K, V>(leaf.keys.slice(0, index), vals.slice(0, index));
+    const right = new BNode<K, V>(leaf.keys.slice(index),   vals.slice(index));
+    return { left, right };
   }
 
-  private _splitInternalAtCut(n: BNodeInternal<K, V>, cut: number): { L: BNodeInternal<K, V>, R: BNodeInternal<K, V> } {
-    const L = new BNodeInternal<K, V>(n.children.slice(0, cut));
-    const R = new BNodeInternal<K, V>(n.children.slice(cut));
-    this._setSizeFromChildren(L);
-    this._setSizeFromChildren(R);
-    return { L, R };
+  private splitInternalAt(n: BNodeInternal<K, V>, index: number): { left: BNodeInternal<K, V>, right: BNodeInternal<K, V> } {
+    const left = new BNodeInternal<K, V>(n.children.slice(0, index));
+    const right = new BNodeInternal<K, V>(n.children.slice(index));
+    return { left, right };
   }
 
   private _cascadeSplitUp(node: BNodeInternal<K, V>): void {
@@ -1373,13 +1366,13 @@ export default class BTree<K=any, V=any> implements ISortedMapF<K,V>, ISortedMap
     while (cur && cur.keys.length > this._maxNodeSize) {
       // writable cur is already ensured by callers
       const right = cur.splitOffRightSide();
-      this._setSizeFromChildren(cur);
-      this._setSizeFromChildren(right);
+      this.refreshSize(cur);
+      this.refreshSize(right);
 
       const gp = this._parentOfNode(cur);
       if (!gp) {
         const newRoot = new BNodeInternal<K, V>([cur, right]);
-        this._setSizeFromChildren(newRoot);
+        this.refreshSize(newRoot);
         this._root = newRoot;
         return;
       }
@@ -1432,8 +1425,8 @@ export default class BTree<K=any, V=any> implements ISortedMapF<K,V>, ISortedMap
           fromLeft
             ? (node as any as BNodeInternal<K,V>).takeFromLeft(sib as any as BNodeInternal<K,V>)
             : (node as any as BNodeInternal<K,V>).takeFromRight(sib as any as BNodeInternal<K,V>);
-          this._setSizeFromChildren(node as any as BNodeInternal<K,V>);
-          this._setSizeFromChildren(sib  as any as BNodeInternal<K,V>);
+          this.refreshSize(node as any as BNodeInternal<K,V>);
+          this.refreshSize(sib  as any as BNodeInternal<K,V>);
         } else {
           fromLeft ? (node as BNode<K,V>).takeFromLeft(sib as BNode<K,V>)
                   : (node as BNode<K,V>).takeFromRight(sib as BNode<K,V>);
@@ -1456,7 +1449,7 @@ export default class BTree<K=any, V=any> implements ISortedMapF<K,V>, ISortedMap
           if (nodeIsShared(L)) { L = L.clone(); writeableParent.children[j - 1] = L; }
           if ((L as any as BNodeInternal<K,V>).children) {
             (L as any as BNodeInternal<K,V>).mergeSibling(node, MAX);
-            this._setSizeFromChildren(L as any as BNodeInternal<K,V>);
+            this.refreshSize(L as any as BNodeInternal<K,V>);
           } else {
             (L as BNode<K,V>).mergeSibling(node as BNode<K,V>, MAX);
             setNodeSize(L, L.keys.length);
@@ -1469,7 +1462,7 @@ export default class BTree<K=any, V=any> implements ISortedMapF<K,V>, ISortedMap
           if (nodeIsShared(R)) { R = R.clone(); writeableParent.children[j + 1] = R; }
           if ((node as any as BNodeInternal<K,V>).children) {
             (node as any as BNodeInternal<K,V>).mergeSibling(R, MAX);
-            this._setSizeFromChildren(node as any as BNodeInternal<K,V>);
+            this.refreshSize(node as any as BNodeInternal<K,V>);
           } else {
             (node as BNode<K,V>).mergeSibling(R as BNode<K,V>, MAX);
             setNodeSize(node, node.keys.length);
@@ -1518,15 +1511,17 @@ export default class BTree<K=any, V=any> implements ISortedMapF<K,V>, ISortedMap
     return -1;
   }
 
-  private _setSizeFromChildren(n: BNodeInternal<K, V>): void {
-    let s = 0; for (const c of n.children) s += nodeSize(c);
+  private refreshSize(n: BNodeInternal<K, V>): void {
+    let s = 0;
+    for (const c of n.children)
+      s += nodeSize(c);
     setNodeSize(n, s);
   }
 
   private _recomputeInternalSizeFromChildren(n: BNodeInternal<K, V>): void {
     // Recompute both keys and cached size from children.
     for (let i = 0; i < n.children.length; i++) n.keys[i] = n.children[i].maxKey();
-    this._setSizeFromChildren(n);
+    this.refreshSize(n);
   }
 
   private _addSizeToAncestors(start: BNodeInternal<K, V>, delta: number): void {
