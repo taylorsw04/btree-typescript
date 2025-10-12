@@ -345,10 +345,22 @@ export default class BTree<K = any, V = any> implements ISortedMapF<K, V>, ISort
      * @returns The zipper edges and gap location.
      */
     private unzip;
-    private getLeafContaining;
+    /**
+     * Get the path to the node containing the key.
+     * Ensures the path is writeable.
+     * @param k The key to search for.
+     * @returns An array of nodes and their indices representing the path to the key. The last entry is always a leaf node and the index follows indexOf xor rules (only >= 0 if k exists).
+     */
+    private getPathTo;
     private _nodeAtDepthOnRoute;
     private collectZipperPath;
+    /**
+     * Splits the leaf at index. The right side of the split will contain the element at index.
+     */
     private splitLeafAt;
+    /**
+     * Splits the internal node at index. The right side of the split will contain the element at index.
+     */
     private splitInternalAt;
     private _cascadeSplitUp;
     private _fixupZipperEdge;

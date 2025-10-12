@@ -1042,24 +1042,20 @@ var BTree = /** @class */ (function () {
      */
     BTree.prototype.unzip = function (k, D) {
         check(D >= 0 && D <= this.height, "unzip: invalid depth");
-        var _a = this.getLeafContaining(k), leaf = _a.leaf, pos = _a.pos;
-        if (pos >= 0)
-            throw new Error("unzip: key already exists");
+        var pathDown = this.getPathTo(k);
+        var leafIndex = pathDown.length - 1;
+        var _a = pathDown[leafIndex], leaf = _a.node, pos = _a.index;
+        check(pos < 0, "unzip: key already exists");
+        var splitAt = ~pos;
         // 1) Leaf boundary: split leaf only if k would land in the middle.
-        var ins = ~pos;
-        if (ins !== 0 && ins !== leaf.keys.length) {
-            var parent = this._parentOfNode(leaf);
-            if (parent)
-                parent = this._ensureWritableInternalInParent(parent);
-            var _b = this.splitLeafAt(leaf, ins), L = _b.left, R = _b.right;
-            if (parent) {
-                var j = this._indexOfChild(parent, leaf);
-                parent.children[j] = L;
-                parent.keys[j] = L.maxKey();
-                parent.insert(j + 1, R);
-                // cached sizes
-                setNodeSize(L, L.keys.length);
-                setNodeSize(R, R.keys.length);
+        if (splitAt !== 0 && splitAt !== leaf.keys.length) {
+            var maybeParent = getParentOf(leafIndex, pathDown);
+            var _b = this.splitLeafAt(leaf, splitAt), L = _b.left, R = _b.right;
+            if (maybeParent) {
+                var parent = maybeParent.node, parentIndex = maybeParent.index;
+                parent.children[parentIndex] = L;
+                parent.keys[parentIndex] = L.maxKey();
+                parent.insert(parentIndex + 1, R);
                 this._recomputeInternalSizeFromChildren(parent);
                 if (parent.keys.length > this._maxNodeSize)
                     this._cascadeSplitUp(parent);
@@ -1186,14 +1182,29 @@ var BTree = /** @class */ (function () {
         var rightZip = rightStart ? this.collectZipperPath(rightStart, /*goLast*/ false) : [];
         return { leftZip: leftZip, rightZip: rightZip, gapParent: gapParent, gapIndex: gapIndex };
     };
-    BTree.prototype.getLeafContaining = function (k) {
+    /**
+     * Get the path to the node containing the key.
+     * Ensures the path is writeable.
+     * @param k The key to search for.
+     * @returns An array of nodes and their indices representing the path to the key. The last entry is always a leaf node and the index follows indexOf xor rules (only >= 0 if k exists).
+     */
+    BTree.prototype.getPathTo = function (k) {
+        var spine = [];
+        if (nodeIsShared(this._root))
+            this._root = this._root.clone();
         var cur = this._root;
         while (!cur.isLeaf) {
             var curInternal = cur;
             var i = Math.min(curInternal.indexOf(k, 0, this._compare), curInternal.children.length - 1);
+            spine.push({ node: cur, index: i });
+            var child = curInternal.children[i];
+            if (nodeIsShared(child)) {
+                curInternal.children[i] = child.clone();
+            }
             cur = curInternal.children[i];
         }
-        return { leaf: cur, pos: cur.indexOf(k, -1, this._compare) };
+        spine.push({ node: cur, index: cur.indexOf(k, -1, this._compare) });
+        return spine;
     };
     BTree.prototype._nodeAtDepthOnRoute = function (k, depth) {
         var x = this._root;
@@ -1216,15 +1227,21 @@ var BTree = /** @class */ (function () {
         }
         return edge;
     };
+    /**
+     * Splits the leaf at index. The right side of the split will contain the element at index.
+     */
     BTree.prototype.splitLeafAt = function (leaf, index) {
         var vals = leaf.reifyValues(); // todo: needed?
         var left = new BNode(leaf.keys.slice(0, index), vals.slice(0, index));
         var right = new BNode(leaf.keys.slice(index), vals.slice(index));
         return { left: left, right: right };
     };
-    BTree.prototype.splitInternalAt = function (n, index) {
-        var left = new BNodeInternal(n.children.slice(0, index));
-        var right = new BNodeInternal(n.children.slice(index));
+    /**
+     * Splits the internal node at index. The right side of the split will contain the element at index.
+     */
+    BTree.prototype.splitInternalAt = function (internal, index) {
+        var left = new BNodeInternal(internal.children.slice(0, index));
+        var right = new BNodeInternal(internal.children.slice(index));
         return { left: left, right: right };
     };
     BTree.prototype._cascadeSplitUp = function (node) {
@@ -2359,6 +2376,12 @@ function adjustNodeSize(node, delta) {
 }
 function markNodeShared(node) {
     node.sharedSizeTag = -Math.abs(node.sharedSizeTag);
+}
+function getParentOf(index, spine) {
+    if (index === 0)
+        return undefined;
+    var parent = spine[index - 1];
+    return { node: parent.node, index: parent.index };
 }
 // Optimization: this array of `undefined`s is used instead of a normal
 // array of values in nodes where `undefined` is the only value.
