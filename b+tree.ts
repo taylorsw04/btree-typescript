@@ -1075,16 +1075,9 @@ export default class BTree<K=any, V=any> implements ISortedMapF<K,V>, ISortedMap
     processSource(result._root, 0);
 
     // Step 6 (first half): reuse remaining candidates via subtree sharing
-    const reusableEntries: ReuseCandidate[] = [];
-    if (!candidateSet.isEmpty) {
-      candidateSet.forEachPair((range, entry) => {
-        reusableEntries.push(entry);
-      });
-    }
-
-    for (const entry of reusableEntries) {
-      result.insertSharedSubtree(entry.node, entry.depth, sourceHeight);
-    }
+    candidateSet.forEachPair((_, candidate) => {
+      result.insertSharedSubtree(candidate.node, candidate.depth, sourceHeight);
+    });
 
     // Step 6 (second half): merge leaf nodes that could not be reused
     for (let i = 0; i < toMerge.length; i++) {
@@ -1141,9 +1134,7 @@ export default class BTree<K=any, V=any> implements ISortedMapF<K,V>, ISortedMap
     check(subtreeHeight <= targetHeight, "insertSharedSubtree: subtree taller than target");
 
     const depthDelta = targetHeight - subtreeHeight;
-    const targetDepth = depthDelta <= 0
-      ? (targetHeight === 0 ? 0 : 1)
-      : depthDelta;
+    const targetDepth = depthDelta <= 0 ? 0 : depthDelta;
     check(targetDepth >= 0 && targetDepth <= targetHeight, "insertSharedSubtree: invalid target depth");
 
     // unzipping at either the min or max key of the subtree should work given it is disjoint with this tree
@@ -1170,8 +1161,10 @@ export default class BTree<K=any, V=any> implements ISortedMapF<K,V>, ISortedMap
     }
 
     // Fix underfilled nodes along both zipper edges top->bottom.
-    this._fixupZipperEdge(leftZip,  /*isLeft*/ true);
-    this._fixupZipperEdge(rightZip, /*isLeft*/ false);
+    if (targetDepth > 0) {
+      this._fixupZipperEdge(leftZip,  /*isLeft*/ true);
+      this._fixupZipperEdge(rightZip, /*isLeft*/ false);
+    }
   }
 
   /**
@@ -1379,7 +1372,7 @@ export default class BTree<K=any, V=any> implements ISortedMapF<K,V>, ISortedMap
     let cur: BNodeInternal<K, V> | undefined = node;
     while (cur && cur.keys.length > this._maxNodeSize) {
       // writable cur is already ensured by callers
-      const right = cur.splitOffRightSide() as BNodeInternal<K, V>;
+      const right = cur.splitOffRightSide();
       this._setSizeFromChildren(cur);
       this._setSizeFromChildren(right);
 
@@ -1411,8 +1404,8 @@ export default class BTree<K=any, V=any> implements ISortedMapF<K,V>, ISortedMap
       if (node.keys.length >= HALF) continue;
 
       // Find parent each time, since previous steps may have re-parented nodes.
-      let parent = this._parentOfNode(node);
-      if (!parent) continue;
+      const parent = this._parentOfNode(node);
+      if (parent === undefined) continue;
 
       // Choose sibling: toward the gap first, else the other side.
       const j = this._indexOfChild(parent, node);
@@ -1421,66 +1414,74 @@ export default class BTree<K=any, V=any> implements ISortedMapF<K,V>, ISortedMap
       if (sibIndex < 0 || sibIndex >= parent.children.length) sibIndex = isLeft ? j - 1 : j + 1;
       if (sibIndex < 0 || sibIndex >= parent.children.length) continue; // no sibling available here
 
-      parent = this._ensureWritableInternalInParent(parent);
-      if (nodeIsShared(node)) parent.children[j] = node = node.clone();
-      let leftSibling = j > 0 ? parent.children[j - 1] : undefined;
-      let rightSibling = j + 1 < parent.children.length ? parent.children[j + 1] : undefined;
-      if (leftSibling && nodeIsShared(leftSibling)) parent.children[j - 1] = leftSibling = leftSibling.clone();
-      if (rightSibling && nodeIsShared(rightSibling)) parent.children[j + 1] = rightSibling = rightSibling.clone();
+      const writeableParent = this._ensureWritableInternalInParent(parent);
+      if (nodeIsShared(node)) writeableParent.children[j] = node = node.clone();
 
-      const borrowFromLeft = leftSibling && leftSibling.keys.length > HALF;
-      const borrowFromRight = rightSibling && rightSibling.keys.length > HALF;
+      const left0  = j > 0 ? writeableParent.children[j - 1] : undefined;
+      const right0 = j + 1 < writeableParent.children.length ? writeableParent.children[j + 1] : undefined;
 
-      if (borrowFromLeft) {
-        if ((node as any as BNodeInternal<K, V>).children) {
-          (node as any as BNodeInternal<K, V>).takeFromLeft(leftSibling as any as BNodeInternal<K, V>);
-          this._setSizeFromChildren(node as any as BNodeInternal<K, V>);
-          this._setSizeFromChildren(leftSibling as any as BNodeInternal<K, V>);
+      const tryBorrow = (fromLeft: boolean): boolean => {
+        const sibIdx = fromLeft ? j - 1 : j + 1;
+        let sib = fromLeft ? left0 : right0;
+        if (!sib || sib.keys.length <= HALF) return false;
+        if (nodeIsShared(sib)) {                      // clone only if we will mutate it
+          sib = sib.clone();
+          writeableParent.children[sibIdx] = sib;
+        }
+        if ((node as any as BNodeInternal<K,V>).children) {
+          fromLeft
+            ? (node as any as BNodeInternal<K,V>).takeFromLeft(sib as any as BNodeInternal<K,V>)
+            : (node as any as BNodeInternal<K,V>).takeFromRight(sib as any as BNodeInternal<K,V>);
+          this._setSizeFromChildren(node as any as BNodeInternal<K,V>);
+          this._setSizeFromChildren(sib  as any as BNodeInternal<K,V>);
         } else {
-          (node as BNode<K, V>).takeFromLeft(leftSibling as BNode<K, V>);
+          fromLeft ? (node as BNode<K,V>).takeFromLeft(sib as BNode<K,V>)
+                  : (node as BNode<K,V>).takeFromRight(sib as BNode<K,V>);
           setNodeSize(node, node.keys.length);
-          setNodeSize(leftSibling!, leftSibling!.keys.length);
+          setNodeSize(sib,  sib.keys.length);
         }
-        parent.keys[j - 1] = parent.children[j - 1].maxKey();
-        parent.keys[j]     = parent.children[j].maxKey();
-      } else if (borrowFromRight) {
-        if ((node as any as BNodeInternal<K, V>).children) {
-          (node as any as BNodeInternal<K, V>).takeFromRight(rightSibling as any as BNodeInternal<K, V>);
-          this._setSizeFromChildren(node as any as BNodeInternal<K, V>);
-          this._setSizeFromChildren(rightSibling as any as BNodeInternal<K, V>);
-        } else {
-          (node as BNode<K, V>).takeFromRight(rightSibling as BNode<K, V>);
-          setNodeSize(node, node.keys.length);
-          setNodeSize(rightSibling!, rightSibling!.keys.length);
+        if (fromLeft) { writeableParent.keys[j - 1] = writeableParent.children[j - 1].maxKey(); }
+        writeableParent.keys[j] = writeableParent.children[j].maxKey();
+        if (!fromLeft) { writeableParent.keys[j + 1] = writeableParent.children[j + 1].maxKey(); }
+        return true;
+      };
+
+      // borrow toward the gap first
+      if ((isLeft && tryBorrow(true)) || (!isLeft && tryBorrow(false)) || tryBorrow(!isLeft)) {
+        // done
+      } else {
+        const mergeIntoLeft = (isLeft && left0) || (!isLeft && !right0 && left0);
+        if (mergeIntoLeft) {
+          let L = left0!;
+          if (nodeIsShared(L)) { L = L.clone(); writeableParent.children[j - 1] = L; }
+          if ((L as any as BNodeInternal<K,V>).children) {
+            (L as any as BNodeInternal<K,V>).mergeSibling(node, MAX);
+            this._setSizeFromChildren(L as any as BNodeInternal<K,V>);
+          } else {
+            (L as BNode<K,V>).mergeSibling(node as BNode<K,V>, MAX);
+            setNodeSize(L, L.keys.length);
+          }
+          writeableParent.children.splice(j, 1);
+          writeableParent.keys.splice(j, 1);
+          writeableParent.keys[j - 1] = writeableParent.children[j - 1].maxKey();
+        } else if (right0) {
+          let R = right0!;
+          if (nodeIsShared(R)) { R = R.clone(); writeableParent.children[j + 1] = R; }
+          if ((node as any as BNodeInternal<K,V>).children) {
+            (node as any as BNodeInternal<K,V>).mergeSibling(R, MAX);
+            this._setSizeFromChildren(node as any as BNodeInternal<K,V>);
+          } else {
+            (node as BNode<K,V>).mergeSibling(R as BNode<K,V>, MAX);
+            setNodeSize(node, node.keys.length);
+          }
+          writeableParent.children.splice(j + 1, 1);
+          writeableParent.keys.splice(j + 1, 1);
+          writeableParent.keys[j] = writeableParent.children[j].maxKey();
         }
-        parent.keys[j]     = parent.children[j].maxKey();
-        parent.keys[j + 1] = parent.children[j + 1].maxKey();
-      } else if (leftSibling) {
-        if ((leftSibling as any as BNodeInternal<K, V>).children) {
-          (leftSibling as any as BNodeInternal<K, V>).mergeSibling(node, MAX);
-          this._setSizeFromChildren(leftSibling as any as BNodeInternal<K, V>);
-        } else {
-          (leftSibling as BNode<K, V>).mergeSibling(node as BNode<K, V>, MAX);
-          setNodeSize(leftSibling, leftSibling.keys.length);
-        }
-        parent.children.splice(j, 1);
-        parent.keys.splice(j, 1);
-        parent.keys[j - 1] = parent.children[j - 1].maxKey();
-      } else if (rightSibling) {
-        if ((node as any as BNodeInternal<K, V>).children) {
-          (node as any as BNodeInternal<K, V>).mergeSibling(rightSibling, MAX);
-          this._setSizeFromChildren(node as any as BNodeInternal<K, V>);
-        } else {
-          (node as BNode<K, V>).mergeSibling(rightSibling as BNode<K, V>, MAX);
-          setNodeSize(node, node.keys.length);
-        }
-        parent.children.splice(j + 1, 1);
-        parent.keys.splice(j + 1, 1);
-        parent.keys[j] = parent.children[j].maxKey();
       }
 
-      this._recomputeInternalSizeFromChildren(parent);
-      if (parent.keys.length > MAX) this._cascadeSplitUp(parent);
+      this._recomputeInternalSizeFromChildren(writeableParent);
+      if (writeableParent.keys.length > MAX) this._cascadeSplitUp(writeableParent);
     }
   }
 

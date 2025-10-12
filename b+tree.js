@@ -951,16 +951,9 @@ var BTree = /** @class */ (function () {
         };
         processSource(result._root, 0);
         // Step 6 (first half): reuse remaining candidates via subtree sharing
-        var reusableEntries = [];
-        if (!candidateSet.isEmpty) {
-            candidateSet.forEachPair(function (range, entry) {
-                reusableEntries.push(entry);
-            });
-        }
-        for (var _i = 0, reusableEntries_1 = reusableEntries; _i < reusableEntries_1.length; _i++) {
-            var entry = reusableEntries_1[_i];
-            result.insertSharedSubtree(entry.node, entry.depth, sourceHeight);
-        }
+        candidateSet.forEachPair(function (_, candidate) {
+            result.insertSharedSubtree(candidate.node, candidate.depth, sourceHeight);
+        });
         // Step 6 (second half): merge leaf nodes that could not be reused
         for (var i = 0; i < toMerge.length; i++) {
             var entry = toMerge[i];
@@ -1009,9 +1002,7 @@ var BTree = /** @class */ (function () {
         var targetHeight = this.height;
         check(subtreeHeight <= targetHeight, "insertSharedSubtree: subtree taller than target");
         var depthDelta = targetHeight - subtreeHeight;
-        var targetDepth = depthDelta <= 0
-            ? (targetHeight === 0 ? 0 : 1)
-            : depthDelta;
+        var targetDepth = depthDelta <= 0 ? 0 : depthDelta;
         check(targetDepth >= 0 && targetDepth <= targetHeight, "insertSharedSubtree: invalid target depth");
         // unzipping at either the min or max key of the subtree should work given it is disjoint with this tree
         var _a = this.unzip(boundaryKey, targetDepth), leftZip = _a.leftZip, rightZip = _a.rightZip, gapParent = _a.gapParent, gapIndex = _a.gapIndex;
@@ -1036,8 +1027,10 @@ var BTree = /** @class */ (function () {
             this._root = newRoot;
         }
         // Fix underfilled nodes along both zipper edges top->bottom.
-        this._fixupZipperEdge(leftZip, /*isLeft*/ true);
-        this._fixupZipperEdge(rightZip, /*isLeft*/ false);
+        if (targetDepth > 0) {
+            this._fixupZipperEdge(leftZip, /*isLeft*/ true);
+            this._fixupZipperEdge(rightZip, /*isLeft*/ false);
+        }
     };
     /**
      * Splits the tree to create a gap at the specified depth D on the search path for key k.
@@ -1266,97 +1259,116 @@ var BTree = /** @class */ (function () {
         }
     };
     BTree.prototype._fixupZipperEdge = function (edge, isLeft) {
+        var _this = this;
         if (edge.length === 0)
             return;
         var MAX = this._maxNodeSize;
         var HALF = (MAX + 1) >> 1;
-        for (var d = 0; d < edge.length; d++) {
+        var _loop_1 = function (d) {
             var node = edge[d];
-            if (node === this._root)
-                continue; // root underfill is allowed or handled elsewhere
+            if (node === this_1._root)
+                return "continue"; // root underfill is allowed or handled elsewhere
             if (node.keys.length >= HALF)
-                continue;
+                return "continue";
             // Find parent each time, since previous steps may have re-parented nodes.
-            var parent = this._parentOfNode(node);
-            if (!parent)
-                continue;
+            var parent = this_1._parentOfNode(node);
+            if (parent === undefined)
+                return "continue";
             // Choose sibling: toward the gap first, else the other side.
-            var j = this._indexOfChild(parent, node);
+            var j = this_1._indexOfChild(parent, node);
             if (j < 0)
-                continue;
+                return "continue";
             var sibIndex = isLeft ? j + 1 : j - 1;
             if (sibIndex < 0 || sibIndex >= parent.children.length)
                 sibIndex = isLeft ? j - 1 : j + 1;
             if (sibIndex < 0 || sibIndex >= parent.children.length)
-                continue; // no sibling available here
-            parent = this._ensureWritableInternalInParent(parent);
+                return "continue"; // no sibling available here
+            var writeableParent = this_1._ensureWritableInternalInParent(parent);
             if (nodeIsShared(node))
-                parent.children[j] = node = node.clone();
-            var leftSibling = j > 0 ? parent.children[j - 1] : undefined;
-            var rightSibling = j + 1 < parent.children.length ? parent.children[j + 1] : undefined;
-            if (leftSibling && nodeIsShared(leftSibling))
-                parent.children[j - 1] = leftSibling = leftSibling.clone();
-            if (rightSibling && nodeIsShared(rightSibling))
-                parent.children[j + 1] = rightSibling = rightSibling.clone();
-            var borrowFromLeft = leftSibling && leftSibling.keys.length > HALF;
-            var borrowFromRight = rightSibling && rightSibling.keys.length > HALF;
-            if (borrowFromLeft) {
+                writeableParent.children[j] = node = node.clone();
+            var left0 = j > 0 ? writeableParent.children[j - 1] : undefined;
+            var right0 = j + 1 < writeableParent.children.length ? writeableParent.children[j + 1] : undefined;
+            var tryBorrow = function (fromLeft) {
+                var sibIdx = fromLeft ? j - 1 : j + 1;
+                var sib = fromLeft ? left0 : right0;
+                if (!sib || sib.keys.length <= HALF)
+                    return false;
+                if (nodeIsShared(sib)) { // clone only if we will mutate it
+                    sib = sib.clone();
+                    writeableParent.children[sibIdx] = sib;
+                }
                 if (node.children) {
-                    node.takeFromLeft(leftSibling);
-                    this._setSizeFromChildren(node);
-                    this._setSizeFromChildren(leftSibling);
+                    fromLeft
+                        ? node.takeFromLeft(sib)
+                        : node.takeFromRight(sib);
+                    _this._setSizeFromChildren(node);
+                    _this._setSizeFromChildren(sib);
                 }
                 else {
-                    node.takeFromLeft(leftSibling);
+                    fromLeft ? node.takeFromLeft(sib)
+                        : node.takeFromRight(sib);
                     setNodeSize(node, node.keys.length);
-                    setNodeSize(leftSibling, leftSibling.keys.length);
+                    setNodeSize(sib, sib.keys.length);
                 }
-                parent.keys[j - 1] = parent.children[j - 1].maxKey();
-                parent.keys[j] = parent.children[j].maxKey();
+                if (fromLeft) {
+                    writeableParent.keys[j - 1] = writeableParent.children[j - 1].maxKey();
+                }
+                writeableParent.keys[j] = writeableParent.children[j].maxKey();
+                if (!fromLeft) {
+                    writeableParent.keys[j + 1] = writeableParent.children[j + 1].maxKey();
+                }
+                return true;
+            };
+            // borrow toward the gap first
+            if ((isLeft && tryBorrow(true)) || (!isLeft && tryBorrow(false)) || tryBorrow(!isLeft)) {
+                // done
             }
-            else if (borrowFromRight) {
-                if (node.children) {
-                    node.takeFromRight(rightSibling);
-                    this._setSizeFromChildren(node);
-                    this._setSizeFromChildren(rightSibling);
+            else {
+                var mergeIntoLeft = (isLeft && left0) || (!isLeft && !right0 && left0);
+                if (mergeIntoLeft) {
+                    var L = left0;
+                    if (nodeIsShared(L)) {
+                        L = L.clone();
+                        writeableParent.children[j - 1] = L;
+                    }
+                    if (L.children) {
+                        L.mergeSibling(node, MAX);
+                        this_1._setSizeFromChildren(L);
+                    }
+                    else {
+                        L.mergeSibling(node, MAX);
+                        setNodeSize(L, L.keys.length);
+                    }
+                    writeableParent.children.splice(j, 1);
+                    writeableParent.keys.splice(j, 1);
+                    writeableParent.keys[j - 1] = writeableParent.children[j - 1].maxKey();
                 }
-                else {
-                    node.takeFromRight(rightSibling);
-                    setNodeSize(node, node.keys.length);
-                    setNodeSize(rightSibling, rightSibling.keys.length);
+                else if (right0) {
+                    var R = right0;
+                    if (nodeIsShared(R)) {
+                        R = R.clone();
+                        writeableParent.children[j + 1] = R;
+                    }
+                    if (node.children) {
+                        node.mergeSibling(R, MAX);
+                        this_1._setSizeFromChildren(node);
+                    }
+                    else {
+                        node.mergeSibling(R, MAX);
+                        setNodeSize(node, node.keys.length);
+                    }
+                    writeableParent.children.splice(j + 1, 1);
+                    writeableParent.keys.splice(j + 1, 1);
+                    writeableParent.keys[j] = writeableParent.children[j].maxKey();
                 }
-                parent.keys[j] = parent.children[j].maxKey();
-                parent.keys[j + 1] = parent.children[j + 1].maxKey();
             }
-            else if (leftSibling) {
-                if (leftSibling.children) {
-                    leftSibling.mergeSibling(node, MAX);
-                    this._setSizeFromChildren(leftSibling);
-                }
-                else {
-                    leftSibling.mergeSibling(node, MAX);
-                    setNodeSize(leftSibling, leftSibling.keys.length);
-                }
-                parent.children.splice(j, 1);
-                parent.keys.splice(j, 1);
-                parent.keys[j - 1] = parent.children[j - 1].maxKey();
-            }
-            else if (rightSibling) {
-                if (node.children) {
-                    node.mergeSibling(rightSibling, MAX);
-                    this._setSizeFromChildren(node);
-                }
-                else {
-                    node.mergeSibling(rightSibling, MAX);
-                    setNodeSize(node, node.keys.length);
-                }
-                parent.children.splice(j + 1, 1);
-                parent.keys.splice(j + 1, 1);
-                parent.keys[j] = parent.children[j].maxKey();
-            }
-            this._recomputeInternalSizeFromChildren(parent);
-            if (parent.keys.length > MAX)
-                this._cascadeSplitUp(parent);
+            this_1._recomputeInternalSizeFromChildren(writeableParent);
+            if (writeableParent.keys.length > MAX)
+                this_1._cascadeSplitUp(writeableParent);
+        };
+        var this_1 = this;
+        for (var d = 0; d < edge.length; d++) {
+            _loop_1(d);
         }
     };
     BTree.prototype._ensureWritableInternalInParent = function (node) {
