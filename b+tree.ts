@@ -1177,24 +1177,23 @@ export default class BTree<K=any, V=any> implements ISortedMapF<K,V>, ISortedMap
    */
   private unzip(k: K, D: number): UnzipResult<K, V> {
     check(D >= 0 && D <= this.height, "unzip: invalid depth");
-    const { leaf, pos } = this.getLeafContaining(k);
-    if (pos >= 0) throw new Error("unzip: key already exists");
+    const pathDown = this.getPathTo(k);
+    const leafIndex = pathDown.length - 1;
+    const { node: leaf, index: pos } = pathDown[leafIndex];
+    check(pos < 0, "unzip: key already exists");
+    const splitAt = ~pos;
     // 1) Leaf boundary: split leaf only if k would land in the middle.
-    const ins = ~pos;
-    if (ins !== 0 && ins !== leaf.keys.length) {
-      let parent = this._parentOfNode(leaf);
-      if (parent) parent = this._ensureWritableInternalInParent(parent);
-      const { left: L, right: R } = this.splitLeafAt(leaf, ins);
-      if (parent) {
-        const j = this._indexOfChild(parent, leaf);
-        parent.children[j] = L;
-        parent.keys[j]     = L.maxKey();
-        parent.insert(j + 1, R);
-        // cached sizes
-        setNodeSize(L, L.keys.length);
-        setNodeSize(R, R.keys.length);
+    if (splitAt !== 0 && splitAt !== leaf.keys.length) {
+      let maybeParent = getParentOf(leafIndex, pathDown);
+      const { left: L, right: R } = this.splitLeafAt(leaf, splitAt);
+      if (maybeParent) {
+        const { node: parent, index: parentIndex } = maybeParent;
+        parent.children[parentIndex] = L;
+        parent.keys[parentIndex] = L.maxKey();
+        parent.insert(parentIndex + 1, R);
         this._recomputeInternalSizeFromChildren(parent);
-        if (parent.keys.length > this._maxNodeSize) this._cascadeSplitUp(parent);
+        if (parent.keys.length > this._maxNodeSize)
+          this._cascadeSplitUp(parent);
       } else {
         // leaf was root
         const newRoot = new BNodeInternal<K, V>([L, R]);
@@ -1315,14 +1314,29 @@ export default class BTree<K=any, V=any> implements ISortedMapF<K,V>, ISortedMap
     return { leftZip, rightZip, gapParent, gapIndex };
   }
 
-  private getLeafContaining(k: K): { leaf: BNode<K, V>, pos: number } {
+  /**
+   * Get the path to the node containing the key.
+   * Ensures the path is writeable.
+   * @param k The key to search for.
+   * @returns An array of nodes and their indices representing the path to the key. The last entry is always a leaf node and the index follows indexOf xor rules (only >= 0 if k exists).
+   */
+  private getPathTo(k: K): NodeSpine<K, V> {
+    const spine: NodeSpine<K, V> = [];
+    if (nodeIsShared(this._root))
+      this._root = this._root.clone();
     let cur = this._root;
     while (!cur.isLeaf) {
       const curInternal = cur as unknown as BNodeInternal<K, V>;
       const i = Math.min(curInternal.indexOf(k, 0, this._compare), curInternal.children.length - 1);
+      spine.push({ node: cur, index: i });
+      const child = curInternal.children[i];
+      if (nodeIsShared(child)) {
+        curInternal.children[i] = child.clone();
+      }
       cur = curInternal.children[i];
     }
-    return { leaf: cur, pos: cur.indexOf(k, -1, this._compare) };
+    spine.push({ node: cur, index: cur.indexOf(k, -1, this._compare) });
+    return spine;
   }
 
   private _nodeAtDepthOnRoute(k: K, depth: number): { node: BNode<K, V>, parent?: BNodeInternal<K, V> } {
@@ -1348,6 +1362,9 @@ export default class BTree<K=any, V=any> implements ISortedMapF<K,V>, ISortedMap
     return edge;
   }
 
+  /**
+   * Splits the leaf at index. The right side of the split will contain the element at index.
+   */
   private splitLeafAt(leaf: BNode<K, V>, index: number): { left: BNode<K, V>, right: BNode<K, V> } {
     const vals = leaf.reifyValues(); // todo: needed?
     const left = new BNode<K, V>(leaf.keys.slice(0, index), vals.slice(0, index));
@@ -1355,9 +1372,12 @@ export default class BTree<K=any, V=any> implements ISortedMapF<K,V>, ISortedMap
     return { left, right };
   }
 
-  private splitInternalAt(n: BNodeInternal<K, V>, index: number): { left: BNodeInternal<K, V>, right: BNodeInternal<K, V> } {
-    const left = new BNodeInternal<K, V>(n.children.slice(0, index));
-    const right = new BNodeInternal<K, V>(n.children.slice(index));
+  /**
+   * Splits the internal node at index. The right side of the split will contain the element at index.
+   */
+  private splitInternalAt(internal: BNodeInternal<K, V>, index: number): { left: BNodeInternal<K, V>, right: BNodeInternal<K, V> } {
+    const left = new BNodeInternal<K, V>(internal.children.slice(0, index));
+    const right = new BNodeInternal<K, V>(internal.children.slice(index));
     return { left, right };
   }
 
@@ -2560,6 +2580,15 @@ interface UnzipResult<K, V> {
   rightZip: BNode<K, V>[];                  // may be empty if boundary is at the extreme
   gapParent: BNodeInternal<K, V> | undefined; // parent at depth D-1; undefined => insertion creates a new root
   gapIndex: number;                         // index at which to insert the subtree in gapParent.children
+}
+
+type NodeSpine<K, V> = { node: BNode<K, V>, index: number }[];
+
+function getParentOf<K,V>(index: number, spine: NodeSpine<K,V>): { node: BNodeInternal<K,V>, index: number } | undefined {
+  if (index === 0)
+    return undefined;
+  const parent = spine[index - 1];
+  return { node: parent.node as BNodeInternal<K,V>, index: parent.index };
 }
 
 // Optimization: this array of `undefined`s is used instead of a normal
