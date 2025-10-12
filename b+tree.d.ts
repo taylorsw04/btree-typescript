@@ -335,19 +335,29 @@ export default class BTree<K = any, V = any> implements ISortedMapF<K, V>, ISort
      * @param sourceDepth The depth of sourceNode in its original tree
      * @param sourceHeight The total height of the source tree
      */
-    private static insertSharedSubtree;
+    private insertSharedSubtree;
     /**
-     * Recursive helper that inserts `nodeToInsert` at `targetDepth` beneath `currentNode`.
-     * Returns:
-     *  - `true` if the node was inserted without splitting,
-     *  - `false` if the subtree could not be placed cleanly (caller must decompose it),
-     *  - a new `BNode` if `currentNode` split and produced a right sibling.
+     * Splits the tree to create a gap at the specified depth D on the search path for key k.
+     * Returns the zipper edges and gap location.
+     * If k is already present in the tree, throws an error.
+     * @param k The key at which to unzip.
+     * @param D The depth at which to create the gap. 0 = root.
+     * @returns The zipper edges and gap location.
      */
-    private static insertNodeAtDepth;
-    /**
-     * Collects all key-value pairs from a subtree.
-     */
-    private static collectPairsHelper;
+    private unzip;
+    private _descendToLeaf;
+    private _nodeAtDepthOnRoute;
+    private _collectEdgeDown;
+    private _splitLeafAt;
+    private _splitInternalAtCut;
+    private _cascadeSplitUp;
+    private _fixupZipperEdge;
+    private _ensureWritableInternalInParent;
+    private _parentOfNode;
+    private _indexOfChild;
+    private _setSizeFromChildren;
+    private _recomputeInternalSizeFromChildren;
+    private _addSizeToAncestors;
     /** Gets an array filled with the contents of the tree, sorted by key */
     toArray(maxLength?: number): [K, V][];
     /** Gets an array of all keys, sorted */
