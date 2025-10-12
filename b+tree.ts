@@ -1132,30 +1132,42 @@ export default class BTree<K=any, V=any> implements ISortedMapF<K,V>, ISortedMap
     // The subtree root must be shared to preserve COW across trees.
     markNodeShared(subtree);
 
-    // unzipping at either the min or max key of the subtree should work given it is disjoint with this tree
-    const { leftZip, rightZip, gapParent, gapIndex } = this.unzip(subtree.maxKey(), sourceDepth);
+    const boundaryKey = subtree.maxKey();
+    check(boundaryKey !== undefined, "insertSharedSubtree: subtree must be non-empty");
 
-    // Insert subtree at depth D-1.
+    const subtreeHeight = sourceHeight - sourceDepth;
+    check(subtreeHeight >= 0, "insertSharedSubtree: invalid source depth");
+    const targetHeight = this.height;
+    check(subtreeHeight <= targetHeight, "insertSharedSubtree: subtree taller than target");
+
+    const depthDelta = targetHeight - subtreeHeight;
+    const targetDepth = depthDelta <= 0
+      ? (targetHeight === 0 ? 0 : 1)
+      : depthDelta;
+    check(targetDepth >= 0 && targetDepth <= targetHeight, "insertSharedSubtree: invalid target depth");
+
+    // unzipping at either the min or max key of the subtree should work given it is disjoint with this tree
+    const { leftZip, rightZip, gapParent, gapIndex } = this.unzip(boundaryKey, targetDepth);
+
+    const delta = nodeSize(subtree);
+
+    // Insert subtree at depth targetDepth.
     let parent = gapParent;
     if (parent) {
-      this._ensureWritableInternalInParent(parent);
+      parent = this._ensureWritableInternalInParent(parent);
       parent.insert(gapIndex, subtree);
-      // propagate size delta up
-      this._addSizeToAncestors(parent, nodeSize(subtree));
+      // propagate size delta up the ancestor chain (parent already updated by insert)
+      this._addSizeToAncestors(parent, delta);
       if (parent.keys.length > this._maxNodeSize) this._cascadeSplitUp(parent);
     } else {
       // New root: place subtree either before or after the current root based on boundary.
       const root = this._root as BNode<K, V>;
       const children = gapIndex === 0 ? [subtree, root] : [root, subtree];
       const newRoot = new BNodeInternal<K, V>(children);
-      // subtree size + old root size = new size
       const rootSize = nodeSize(root);
-      setNodeSize(newRoot, rootSize + nodeSize(subtree));
+      setNodeSize(newRoot, rootSize + delta);
       this._root = newRoot;
     }
-
-    // Update overall tree size.
-    adjustNodeSize(this._root, nodeSize(subtree));
 
     // Fix underfilled nodes along both zipper edges top->bottom.
     this._fixupZipperEdge(leftZip,  /*isLeft*/ true);
@@ -1179,8 +1191,8 @@ export default class BTree<K=any, V=any> implements ISortedMapF<K,V>, ISortedMap
       // 1) Leaf boundary: split leaf only if k would land in the middle.
       const ins = ~pos;
       if (ins !== 0 && ins !== leaf.keys.length) {
-        const parent = this._parentOfNode(leaf);
-        if (parent) this._ensureWritableInternalInParent(parent);
+        let parent = this._parentOfNode(leaf);
+        if (parent) parent = this._ensureWritableInternalInParent(parent);
         const { L, R } = this._splitLeafAt(leaf, ins);
         if (parent) {
           const j = this._indexOfChild(parent, leaf);
@@ -1208,21 +1220,22 @@ export default class BTree<K=any, V=any> implements ISortedMapF<K,V>, ISortedMap
     const steps = H0 - D; // number of interior levels from leaf’s parent up to depth D
     for (let s = 1; s <= steps; s++) {
       const { node, parent } = this._nodeAtDepthOnRoute(k, H0 - s);
-      const cur = node as BNodeInternal<K, V>;
+      let cur = node as BNodeInternal<K, V>;
+      cur = this._ensureWritableInternalInParent(cur);
       const i = Math.min(cur.indexOf(k, 0, this._compare), cur.children.length - 1);
       if (i === 0 || i === cur.children.length - 1) continue; // already extreme at this level
 
       // Need an exact boundary inside cur at cut=i
-      this._ensureWritableInternalInParent(cur);
       const { L, R } = this._splitInternalAtCut(cur, i);
       if (parent) {
-        this._ensureWritableInternalInParent(parent);
-        const slot = this._indexOfChild(parent, cur);
-        parent.children[slot] = L;
-        parent.keys[slot]     = L.maxKey();
-        parent.insert(slot + 1, R);
-        this._recomputeInternalSizeFromChildren(parent);
-        if (parent.keys.length > this._maxNodeSize) this._cascadeSplitUp(parent);
+        let writableParent = parent;
+        writableParent = this._ensureWritableInternalInParent(writableParent);
+        const slot = this._indexOfChild(writableParent, cur);
+        writableParent.children[slot] = L;
+        writableParent.keys[slot]     = L.maxKey();
+        writableParent.insert(slot + 1, R);
+        this._recomputeInternalSizeFromChildren(writableParent);
+        if (writableParent.keys.length > this._maxNodeSize) this._cascadeSplitUp(writableParent);
       } else {
         const newRoot = new BNodeInternal<K, V>([L, R]);
         this._setSizeFromChildren(newRoot);
@@ -1232,56 +1245,78 @@ export default class BTree<K=any, V=any> implements ISortedMapF<K,V>, ISortedMap
 
     // 3) Compute (gapParent, gapIndex) at depth D and build zipper edges.
     const { node: nodeD, parent: parentD } = this._nodeAtDepthOnRoute(k, D);
-    const curD = nodeD as BNodeInternal<K, V>;
-    const iD   = Math.min(curD.indexOf(k, 0, this._compare), curD.children.length - 1);
 
-    let gapParent: BNodeInternal<K, V> | undefined = parentD;
+    let gapParent: BNodeInternal<K, V> | undefined = undefined;
     let gapIndex = 0;
-
     let leftStart:  BNode<K, V> | undefined;
     let rightStart: BNode<K, V> | undefined;
 
-    if (iD === 0) {
-      // boundary is at the beginning of curD
+    if (nodeD.isLeaf) {
+      const leaf = nodeD;
+      const posLeaf = leaf.indexOf(k, -1, this._compare);
+      const insLeaf = ~posLeaf;
+      check(insLeaf === 0 || insLeaf === leaf.keys.length, "unzip: leaf was not aligned");
+      gapParent = parentD;
       if (gapParent) {
-        const j = this._indexOfChild(gapParent, curD);
-        gapIndex = j;             // insert before curD at depth D-1
-        rightStart = curD;        // right zipper starts inside curD
-        leftStart  = j > 0 ? gapParent.children[j - 1] : undefined; // may be absent (extreme)
+        const childIdx = this._indexOfChild(gapParent, leaf);
+        if (insLeaf === 0) {
+          gapIndex = childIdx;
+          rightStart = leaf;
+          leftStart = childIdx > 0 ? gapParent.children[childIdx - 1] : undefined;
+        } else {
+          gapIndex = childIdx + 1;
+          leftStart = leaf;
+          rightStart = childIdx + 1 < gapParent.children.length ? gapParent.children[childIdx + 1] : undefined;
+        }
       } else {
-        // root is at depth D and boundary is at its beginning; insertion creates a new root, at index 0
-        gapParent = undefined;
-        gapIndex  = 0;
-        rightStart = curD;
-        leftStart  = undefined;
-      }
-    } else if (iD === curD.children.length - 1) {
-      // boundary is at the end of curD
-      if (gapParent) {
-        const j = this._indexOfChild(gapParent, curD);
-        gapIndex = j + 1;         // insert after curD at depth D-1
-        leftStart  = curD;
-        rightStart = j + 1 < gapParent.children.length ? gapParent.children[j + 1] : undefined;
-      } else {
-        gapParent = undefined;
-        gapIndex  = 1;            // new root, inserted to the right of curD
-        leftStart  = curD;
-        rightStart = undefined;
+        if (insLeaf === 0) {
+          gapIndex = 0;
+          rightStart = leaf;
+          leftStart = undefined;
+        } else {
+          gapIndex = 1;
+          leftStart = leaf;
+          rightStart = undefined;
+        }
       }
     } else {
-      // This level was split in the loop above; the boundary lies between L and R in parentD.
-      // Find the first child strictly to the right of k at depth D-1.
-      const p = parentD!;
-      gapIndex = Math.min(p.indexOf(k, 0, this._compare), p.children.length - 1);
-      // Insert BEFORE the child that k routes to (i.e., between L and R)
-      // If k routes to the left child (due to equal max keys), move one step right.
-      const rightIdx = gapIndex;
-      leftStart  = p.children[rightIdx - 1];
-      rightStart = p.children[rightIdx];
-      gapParent  = p;
-      // Ensure gapIndex inserts between leftStart and rightStart:
-      // insert at `rightIdx`.
-      gapIndex   = rightIdx;
+      const curD = nodeD as BNodeInternal<K, V>;
+      const iD   = Math.min(curD.indexOf(k, 0, this._compare), curD.children.length - 1);
+      gapParent = parentD;
+
+      if (iD === 0) {
+        if (gapParent) {
+          const j = this._indexOfChild(gapParent, curD);
+          gapIndex = j;             // insert before curD at depth D-1
+          rightStart = curD;        // right zipper starts inside curD
+          leftStart  = j > 0 ? gapParent.children[j - 1] : undefined; // may be absent (extreme)
+        } else {
+          gapIndex  = 0;
+          rightStart = curD;
+          leftStart  = undefined;
+        }
+      } else if (iD === curD.children.length - 1) {
+        if (gapParent) {
+          const j = this._indexOfChild(gapParent, curD);
+          gapIndex = j + 1;         // insert after curD at depth D-1
+          leftStart  = curD;
+          rightStart = j + 1 < gapParent.children.length ? gapParent.children[j + 1] : undefined;
+        } else {
+          gapIndex  = 1;            // new root, inserted to the right of curD
+          leftStart  = curD;
+          rightStart = undefined;
+        }
+      } else {
+        // This level was split in the loop above; the boundary lies between L and R in parentD.
+        // Find the first child strictly to the right of k at depth D-1.
+        const p = parentD!;
+        const rightIdx = Math.min(p.indexOf(k, 0, this._compare), p.children.length - 1);
+        check(rightIdx > 0, "unzip: unexpected boundary index");
+        gapParent  = p;
+        gapIndex   = rightIdx;
+        leftStart  = p.children[rightIdx - 1];
+        rightStart = p.children[rightIdx];
+      }
     }
 
     const leftZip  = leftStart  ? this._collectEdgeDown(leftStart,  /*goLast*/ true)  : [];
@@ -1355,12 +1390,13 @@ export default class BTree<K=any, V=any> implements ISortedMapF<K,V>, ISortedMap
         this._root = newRoot;
         return;
       }
-      this._ensureWritableInternalInParent(gp);
-      const j = this._indexOfChild(gp, cur);
-      gp.insert(j + 1, right);
+      let writableGp = gp;
+      writableGp = this._ensureWritableInternalInParent(writableGp);
+      const j = this._indexOfChild(writableGp, cur);
+      writableGp.insert(j + 1, right);
       // Parent subtree size unchanged (cur + right == old cur)
-      this._recomputeInternalSizeFromChildren(gp);
-      cur = gp;
+      this._recomputeInternalSizeFromChildren(writableGp);
+      cur = writableGp;
     }
   }
 
@@ -1370,78 +1406,77 @@ export default class BTree<K=any, V=any> implements ISortedMapF<K,V>, ISortedMap
     const HALF = (MAX + 1) >> 1;
 
     for (let d = 0; d < edge.length; d++) {
-      const node = edge[d];
+      let node = edge[d];
       if (node === this._root) continue; // root underfill is allowed or handled elsewhere
       if (node.keys.length >= HALF) continue;
 
       // Find parent each time, since previous steps may have re-parented nodes.
-      const parent = this._parentOfNode(node);
+      let parent = this._parentOfNode(node);
       if (!parent) continue;
 
       // Choose sibling: toward the gap first, else the other side.
       const j = this._indexOfChild(parent, node);
+      if (j < 0) continue;
       let sibIndex = isLeft ? j + 1 : j - 1;
       if (sibIndex < 0 || sibIndex >= parent.children.length) sibIndex = isLeft ? j - 1 : j + 1;
       if (sibIndex < 0 || sibIndex >= parent.children.length) continue; // no sibling available here
 
-      this._ensureWritableInternalInParent(parent);
-      const a = Math.min(j, sibIndex);
-      const b = Math.max(j, sibIndex);
-      let L = parent.children[a];
-      let R = parent.children[b];
-      if (nodeIsShared(L)) parent.children[a] = L = L.clone();
-      if (nodeIsShared(R)) parent.children[b] = R = R.clone();
+      parent = this._ensureWritableInternalInParent(parent);
+      if (nodeIsShared(node)) parent.children[j] = node = node.clone();
+      let leftSibling = j > 0 ? parent.children[j - 1] : undefined;
+      let rightSibling = j + 1 < parent.children.length ? parent.children[j + 1] : undefined;
+      if (leftSibling && nodeIsShared(leftSibling)) parent.children[j - 1] = leftSibling = leftSibling.clone();
+      if (rightSibling && nodeIsShared(rightSibling)) parent.children[j + 1] = rightSibling = rightSibling.clone();
 
-      // Try direct merge.
-      if (L.keys.length + R.keys.length <= MAX) {
-        if ((L as any as BNodeInternal<K, V>).children) {
-          (L as any as BNodeInternal<K, V>).mergeSibling(R, MAX);
-          this._setSizeFromChildren(L as any as BNodeInternal<K, V>);
+      const borrowFromLeft = leftSibling && leftSibling.keys.length > HALF;
+      const borrowFromRight = rightSibling && rightSibling.keys.length > HALF;
+
+      if (borrowFromLeft) {
+        if ((node as any as BNodeInternal<K, V>).children) {
+          (node as any as BNodeInternal<K, V>).takeFromLeft(leftSibling as any as BNodeInternal<K, V>);
+          this._setSizeFromChildren(node as any as BNodeInternal<K, V>);
+          this._setSizeFromChildren(leftSibling as any as BNodeInternal<K, V>);
         } else {
-          (L as BNode<K, V>).mergeSibling(R, MAX);
-          setNodeSize(L, L.keys.length);
+          (node as BNode<K, V>).takeFromLeft(leftSibling as BNode<K, V>);
+          setNodeSize(node, node.keys.length);
+          setNodeSize(leftSibling!, leftSibling!.keys.length);
         }
-        parent.children.splice(b, 1);
-        parent.keys.splice(b, 1);
-        parent.keys[a] = parent.children[a].maxKey();
-        this._recomputeInternalSizeFromChildren(parent);
-        if (parent.keys.length > MAX) this._cascadeSplitUp(parent);
-        continue;
-      }
-
-      // Otherwise absorb underfilled into neighbor, then split neighbor.
-      const keep = (L.keys.length >= R.keys.length) ? L : R;
-      const drop = (keep === L) ? R : L;
-
-      if ((keep as any as BNodeInternal<K, V>).children) {
-        (keep as any as BNodeInternal<K, V>).mergeSibling(drop, MAX);
-        this._setSizeFromChildren(keep as any as BNodeInternal<K, V>);
-      } else {
-        (keep as BNode<K, V>).mergeSibling(drop, MAX);
-        setNodeSize(keep, keep.keys.length);
-      }
-      // Remove 'drop' from parent
-      const dropIdx = this._indexOfChild(parent, drop);
-      parent.children.splice(dropIdx, 1);
-      parent.keys.splice(dropIdx, 1);
-
-      // Split the overfull 'keep'.
-      if ((keep as any as BNodeInternal<K, V>).children) {
-        const right = (keep as any as BNodeInternal<K, V>).splitOffRightSide() as BNodeInternal<K, V>;
-        this._setSizeFromChildren(keep as any as BNodeInternal<K, V>);
-        this._setSizeFromChildren(right);
-        const ks = this._indexOfChild(parent, keep);
-        parent.insert(ks + 1, right);
-      } else {
-        const over = keep as BNode<K, V>;
-        const half = over.keys.length >> 1;
-        const { L: L2, R: R2 } = this._splitLeafAt(over, half);
-        const ks = this._indexOfChild(parent, over);
-        parent.children[ks] = L2;
-        parent.keys[ks]     = L2.maxKey();
-        parent.insert(ks + 1, R2);
-        setNodeSize(L2, L2.keys.length);
-        setNodeSize(R2, R2.keys.length);
+        parent.keys[j - 1] = parent.children[j - 1].maxKey();
+        parent.keys[j]     = parent.children[j].maxKey();
+      } else if (borrowFromRight) {
+        if ((node as any as BNodeInternal<K, V>).children) {
+          (node as any as BNodeInternal<K, V>).takeFromRight(rightSibling as any as BNodeInternal<K, V>);
+          this._setSizeFromChildren(node as any as BNodeInternal<K, V>);
+          this._setSizeFromChildren(rightSibling as any as BNodeInternal<K, V>);
+        } else {
+          (node as BNode<K, V>).takeFromRight(rightSibling as BNode<K, V>);
+          setNodeSize(node, node.keys.length);
+          setNodeSize(rightSibling!, rightSibling!.keys.length);
+        }
+        parent.keys[j]     = parent.children[j].maxKey();
+        parent.keys[j + 1] = parent.children[j + 1].maxKey();
+      } else if (leftSibling) {
+        if ((leftSibling as any as BNodeInternal<K, V>).children) {
+          (leftSibling as any as BNodeInternal<K, V>).mergeSibling(node, MAX);
+          this._setSizeFromChildren(leftSibling as any as BNodeInternal<K, V>);
+        } else {
+          (leftSibling as BNode<K, V>).mergeSibling(node as BNode<K, V>, MAX);
+          setNodeSize(leftSibling, leftSibling.keys.length);
+        }
+        parent.children.splice(j, 1);
+        parent.keys.splice(j, 1);
+        parent.keys[j - 1] = parent.children[j - 1].maxKey();
+      } else if (rightSibling) {
+        if ((node as any as BNodeInternal<K, V>).children) {
+          (node as any as BNodeInternal<K, V>).mergeSibling(rightSibling, MAX);
+          this._setSizeFromChildren(node as any as BNodeInternal<K, V>);
+        } else {
+          (node as BNode<K, V>).mergeSibling(rightSibling as BNode<K, V>, MAX);
+          setNodeSize(node, node.keys.length);
+        }
+        parent.children.splice(j + 1, 1);
+        parent.keys.splice(j + 1, 1);
+        parent.keys[j] = parent.children[j].maxKey();
       }
 
       this._recomputeInternalSizeFromChildren(parent);
@@ -1449,8 +1484,8 @@ export default class BTree<K=any, V=any> implements ISortedMapF<K,V>, ISortedMap
     }
   }
 
-  private _ensureWritableInternalInParent(node: BNodeInternal<K, V>): void {
-    if (!nodeIsShared(node)) return;
+  private _ensureWritableInternalInParent(node: BNodeInternal<K, V>): BNodeInternal<K, V> {
+    if (!nodeIsShared(node)) return node;
     const gp = this._parentOfNode(node);
     const clone = node.clone() as BNodeInternal<K, V>;
     if (gp) {
@@ -1460,6 +1495,7 @@ export default class BTree<K=any, V=any> implements ISortedMapF<K,V>, ISortedMap
     } else {
       this._root = clone;
     }
+    return clone;
   }
 
   private _parentOfNode(child: BNode<K, V>): BNodeInternal<K, V> | undefined {
@@ -1493,10 +1529,16 @@ export default class BTree<K=any, V=any> implements ISortedMapF<K,V>, ISortedMap
   }
 
   private _addSizeToAncestors(start: BNodeInternal<K, V>, delta: number): void {
-    let p: BNodeInternal<K, V> | undefined = start;
-    while (p) {
-      adjustNodeSize(p, delta);
-      p = this._parentOfNode(p);
+    let child: BNode<K, V> = start;
+    let parent = this._parentOfNode(child);
+    while (parent) {
+      parent = this._ensureWritableInternalInParent(parent);
+      adjustNodeSize(parent, delta);
+      const idx = this._indexOfChild(parent, child);
+      if (idx >= 0)
+        parent.keys[idx] = child.maxKey();
+      child = parent;
+      parent = this._parentOfNode(child);
     }
   }
   
