@@ -4,6 +4,7 @@ exports.buildFromDecomposition = exports.decompose = void 0;
 var b_tree_1 = require("../b+tree");
 var shared_1 = require("./shared");
 var parallelWalk_1 = require("./parallelWalk");
+var decomposeLoadFactor = 0.7;
 /**
  * Decomposes two trees into disjoint nodes. Reuses interior nodes when they do not overlap/intersect with any leaf nodes
  * in the other tree. Overlapping leaf nodes are broken down into new leaf nodes containing merged entries.
@@ -12,6 +13,7 @@ var parallelWalk_1 = require("./parallelWalk");
  * be disjoint. This is true because the leading cursor was also previously walked in this way, and is thus pointing to
  * the first key at or after the trailing cursor's previous position.
  * The cursor walk is efficient, meaning it skips over disjoint subtrees entirely rather than visiting every leaf.
+ * Note: some of the returned leaves may be underfilled.
  * @internal
  */
 function decompose(left, right, combineFn, ignoreRight) {
@@ -39,7 +41,7 @@ function decompose(left, right, combineFn, ignoreRight) {
         (0, shared_1.alternatingPush)(disjoint, 0, leaf);
     };
     var addSharedNodeToDisjointSet = function (node, height) {
-        (0, shared_1.makeLeavesFrom)(pending, maxNodeSize, onLeafCreation);
+        (0, shared_1.makeLeavesFrom)(pending, maxNodeSize, onLeafCreation, decomposeLoadFactor);
         // flush pending entries
         pending.length = 0;
         node.isShared = true;
@@ -266,7 +268,7 @@ function decompose(left, right, combineFn, ignoreRight) {
         }
     }
     // Ensure any trailing non-disjoint entries are added
-    var createdLeaves = (0, shared_1.makeLeavesFrom)(pending, maxNodeSize, onLeafCreation);
+    var createdLeaves = (0, shared_1.makeLeavesFrom)(pending, maxNodeSize, onLeafCreation, decomposeLoadFactor);
     // In fully interleaved cases, no leaves may be created until now
     if (tallestHeight < 0 && createdLeaves > 0) {
         tallestIndex = (0, shared_1.alternatingCount)(disjoint) - 1;

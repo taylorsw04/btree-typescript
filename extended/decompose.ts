@@ -13,6 +13,8 @@ export type DecomposeResult<K, V> = { disjoint: AlternatingList<number, BNode<K,
  */
 type DecomposePayload = { disqualified: boolean };
 
+const decomposeLoadFactor = 0.7;
+
 /**
  * Decomposes two trees into disjoint nodes. Reuses interior nodes when they do not overlap/intersect with any leaf nodes
  * in the other tree. Overlapping leaf nodes are broken down into new leaf nodes containing merged entries.
@@ -21,6 +23,7 @@ type DecomposePayload = { disqualified: boolean };
  * be disjoint. This is true because the leading cursor was also previously walked in this way, and is thus pointing to 
  * the first key at or after the trailing cursor's previous position.
  * The cursor walk is efficient, meaning it skips over disjoint subtrees entirely rather than visiting every leaf.
+ * Note: some of the returned leaves may be underfilled.
  * @internal
  */
 export function decompose<K, V>(
@@ -57,7 +60,7 @@ export function decompose<K, V>(
   }
 
   const addSharedNodeToDisjointSet = (node: BNode<K, V>, height: number) => {
-    makeLeavesFrom(pending, maxNodeSize, onLeafCreation);
+    makeLeavesFrom(pending, maxNodeSize, onLeafCreation, decomposeLoadFactor);
     // flush pending entries
     pending.length = 0;
     node.isShared = true;
@@ -346,7 +349,7 @@ export function decompose<K, V>(
   }
 
   // Ensure any trailing non-disjoint entries are added
-  const createdLeaves = makeLeavesFrom(pending, maxNodeSize, onLeafCreation);
+  const createdLeaves = makeLeavesFrom(pending, maxNodeSize, onLeafCreation, decomposeLoadFactor);
   // In fully interleaved cases, no leaves may be created until now
   if (tallestHeight < 0 && createdLeaves > 0) {
     tallestIndex = alternatingCount(disjoint) - 1;

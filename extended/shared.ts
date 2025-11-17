@@ -34,7 +34,7 @@ export function makeLeavesFrom<K, V>(
   alternatingList: AlternatingList<K, V>,
   maxNodeSize: number,
   onLeafCreation: (node: BNode<K, V>) => void,
-  loadFactor = 0.8
+  loadFactor: number
 ): number {
   const totalPairs = alternatingCount(alternatingList);
   if (totalPairs === 0)

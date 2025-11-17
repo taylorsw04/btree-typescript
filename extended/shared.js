@@ -15,7 +15,6 @@ var b_tree_1 = require("../b+tree");
  * @internal
  */
 function makeLeavesFrom(alternatingList, maxNodeSize, onLeafCreation, loadFactor) {
-    if (loadFactor === void 0) { loadFactor = 0.8; }
     var totalPairs = alternatingCount(alternatingList);
     if (totalPairs === 0)
         return 0;
