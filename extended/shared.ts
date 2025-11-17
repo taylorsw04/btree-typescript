@@ -20,23 +20,33 @@ export type AlternatingList<A, B> = Array<A | B>;
 
 /**
  * Flushes entries from an alternating list into leaf nodes.
- * The leaf nodes are packed as tightly as possible while ensuring all
- * nodes are at least 50% full (if more than one leaf is created).
+ * The supplied load factor will be respected if possible, but may be exceeded
+ * to ensure the 50% full rule is maintained.
+ * Note: if < maxNodeSize entries are provided, only one leaf will be created, which may be underfilled.
+ * @param alternatingList The list of entries to flush. This list will be cleared.
+ * @param maxNodeSize The maximum node size (branching factor) for the resulting leaves.
+ * @param onLeafCreation Called when a new leaf is created.
+ * @param loadFactor Desired load factor for created leaves. Must be between 0.5 and 1.0.
+ * @returns The number of leaves created.
  * @internal
  */
 export function flushToLeaves<K, V>(
   alternatingList: AlternatingList<K, V>,
   maxNodeSize: number,
-  onLeafCreation: (node: BNode<K, V>) => void
+  onLeafCreation: (node: BNode<K, V>) => void,
+  loadFactor = 0.8
 ): number {
   const totalPairs = alternatingCount(alternatingList);
   if (totalPairs === 0)
     return 0;
 
+  const targetSize = Math.ceil(maxNodeSize * loadFactor);
+  // Ensure we don't make any underfilled nodes unless we have to.
+  const targetLeafCount = totalPairs <= maxNodeSize ? 1 : Math.ceil(totalPairs / targetSize);
+
   // This method creates as many evenly filled leaves as possible from
   // the pending entries. All will be > 50% full if we are creating more than one leaf.
-  const leafCount = Math.ceil(totalPairs / maxNodeSize);
-  let remainingLeaves = leafCount;
+  let remainingLeaves = targetLeafCount;
   let remaining = totalPairs;
   let pairIndex = 0;
   while (remainingLeaves > 0) {
@@ -54,7 +64,7 @@ export function flushToLeaves<K, V>(
     onLeafCreation(leaf);
   }
   alternatingList.length = 0;
-  return leafCount;
+  return targetLeafCount;
 };
 
 // ------- Alternating list helpers -------

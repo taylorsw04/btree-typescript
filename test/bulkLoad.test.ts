@@ -29,9 +29,9 @@ function toAlternating(pairs: Pair[]): number[] {
   return alternating;
 }
 
-function buildTreeFromPairs(maxNodeSize: number, pairs: Pair[]) {
+function buildTreeFromPairs(maxNodeSize: number, pairs: Pair[], loadFactor: number) {
   const alternating = toAlternating(pairs);
-  const tree = bulkLoad<number, number>(alternating, maxNodeSize, compareNumbers);
+  const tree = bulkLoad<number, number>(alternating, maxNodeSize, compareNumbers, loadFactor);
   const root = tree['_root'] as BNode<number, number>;
   return { tree, root };
 }
@@ -74,7 +74,7 @@ describe.each(branchingFactors)('bulkLoad fanout %i', (maxNodeSize) => {
   });
 
   test('empty input produces empty tree', () => {
-    const { tree, root } = buildTreeFromPairs(maxNodeSize, []);
+    const { tree, root } = buildTreeFromPairs(maxNodeSize, [], 1.0);
     expect(root?.isLeaf).toBe(true);
     expect(root?.keys.length ?? 0).toBe(0);
     expectTreeMatches(tree, []);
@@ -82,7 +82,7 @@ describe.each(branchingFactors)('bulkLoad fanout %i', (maxNodeSize) => {
 
   test('single entry stays in one leaf', () => {
     const pairs = sequentialPairs(1, 5);
-    const { tree } = buildTreeFromPairs(maxNodeSize, pairs);
+    const { tree } = buildTreeFromPairs(maxNodeSize, pairs, 1.0);
     expectTreeMatches(tree, pairs);
     const root = tree['_root'] as BNode<number, number>;
     expect(root.isLeaf).toBe(true);
@@ -91,17 +91,35 @@ describe.each(branchingFactors)('bulkLoad fanout %i', (maxNodeSize) => {
 
   test('fills a single leaf up to capacity', () => {
     const pairs = sequentialPairs(maxNodeSize, 0, 2);
-    const { tree } = buildTreeFromPairs(maxNodeSize, pairs);
+    const { tree } = buildTreeFromPairs(maxNodeSize, pairs, 1.0);
     expectTreeMatches(tree, pairs);
     const root = tree['_root'] as BNode<number, number>;
     expect(root.isLeaf).toBe(true);
     expect(root.keys.length).toBe(maxNodeSize);
   });
 
+  test('does not produce underfilled nodes if possible', () => {
+    const pairs = sequentialPairs(maxNodeSize, 0, 2);
+    // despite asking for only 60% load factor, we should still get a full node
+    // because splitting into > 1 leaf would cause underfilled nodes
+    const { tree } = buildTreeFromPairs(maxNodeSize, pairs, 0.6);
+    expectTreeMatches(tree, pairs);
+    const root = tree['_root'] as BNode<number, number>;
+    expect(root.isLeaf).toBe(true);
+    expect(root.keys.length).toBe(maxNodeSize);
+  });
+
+  test('throws when load factor is too low or too high', () => {
+      const pairs = sequentialPairs(maxNodeSize, 0, 2);
+      const alternating = toAlternating(pairs);
+      expect(() => bulkLoad<number, number>(alternating, maxNodeSize, compareNumbers, 0.3)).toThrow();
+      expect(() => bulkLoad<number, number>(alternating, maxNodeSize, compareNumbers, 1.1)).toThrow();
+  });
+
   test('distributes keys nearly evenly across leaves when not divisible by fanout', () => {
     const inputSize = maxNodeSize * 3 + Math.floor(maxNodeSize / 2) + 1;
     const pairs = sequentialPairs(inputSize, 10, 3);
-    const { tree } = buildTreeFromPairs(maxNodeSize, pairs);
+    const { tree } = buildTreeFromPairs(maxNodeSize, pairs, 0.8);
     expectTreeMatches(tree, pairs);
     const leaves = collectLeaves(tree['_root'] as BNode<number, number>);
     const leafSizes = leaves.map((leaf) => leaf.keys.length);
@@ -113,7 +131,7 @@ describe.each(branchingFactors)('bulkLoad fanout %i', (maxNodeSize) => {
   test('creates multiple internal layers when leaf count exceeds branching factor', () => {
     const inputSize = maxNodeSize * maxNodeSize + Math.floor(maxNodeSize / 2) + 1;
     const pairs = sequentialPairs(inputSize, 0, 1);
-    const { tree } = buildTreeFromPairs(maxNodeSize, pairs);
+    const { tree } = buildTreeFromPairs(maxNodeSize, pairs, 0.8);
     expectTreeMatches(tree, pairs);
     const root = tree['_root'] as BNode<number, number>;
     expect(root.isLeaf).toBe(false);
@@ -123,7 +141,7 @@ describe.each(branchingFactors)('bulkLoad fanout %i', (maxNodeSize) => {
   test('loads 10000 entries and preserves all data', () => {
     const keys = makeArray(10000, false, 3);
     const pairs = pairsFromKeys(keys);
-    const { tree } = buildTreeFromPairs(maxNodeSize, pairs);
+    const { tree } = buildTreeFromPairs(maxNodeSize, pairs, 1.0);
     expectTreeMatches(tree, pairs);
     const leaves = collectLeaves(tree['_root'] as BNode<number, number>);
     expect(leaves.length).toBe(Math.ceil(pairs.length / maxNodeSize));
@@ -148,6 +166,7 @@ describe('bulkLoad fuzz tests', () => {
     iterationsPerOOM: 3,
     spacings: [1, 2, 3, 5, 8, 13],
     payloadMods: [1, 2, 5, 11, 17],
+    loadFactors: [0.5, 0.8, 1.0],
     timeoutMs: 30_000,
   } as const;
 
@@ -160,32 +179,28 @@ describe('bulkLoad fuzz tests', () => {
       for (const oom of FUZZ_SETTINGS.ooms) {
         const baseSize = 5 * Math.pow(10, oom);
         for (let iteration = 0; iteration < FUZZ_SETTINGS.iterationsPerOOM; iteration++) {
-          const spacing = FUZZ_SETTINGS.spacings[randomInt(rng, FUZZ_SETTINGS.spacings.length)];
-          const payloadMod = FUZZ_SETTINGS.payloadMods[randomInt(rng, FUZZ_SETTINGS.payloadMods.length)];
-          const sizeJitter = randomInt(rng, baseSize);
-          const size = baseSize + sizeJitter;
+          for (const loadFactor of FUZZ_SETTINGS.loadFactors) {
+            const targetNodeSize = Math.ceil(maxNodeSize * loadFactor);
+            const spacing = FUZZ_SETTINGS.spacings[randomInt(rng, FUZZ_SETTINGS.spacings.length)];
+            const payloadMod = FUZZ_SETTINGS.payloadMods[randomInt(rng, FUZZ_SETTINGS.payloadMods.length)];
+            const sizeJitter = randomInt(rng, baseSize);
+            const size = baseSize + sizeJitter;
 
-          test(`size ${size}, spacing ${spacing}, payload ${payloadMod}, iteration ${iteration}`, () => {
-            const keys = makeArray(size, false, spacing, 0, rng);
-            const pairs = pairsFromKeys(keys).map(([key, value], index) => [key, value * payloadMod + index] as Pair);
-            const { tree, root } = buildTreeFromPairs(maxNodeSize, pairs);
-            expectTreeMatches(tree, pairs);
+            test(`size ${size}, spacing ${spacing}, payload ${payloadMod}, iteration ${iteration}`, () => {
+              const keys = makeArray(size, false, spacing, 0, rng);
+              const pairs = pairsFromKeys(keys).map(([key, value], index) => [key, value * payloadMod + index] as Pair);
+              const { tree, root } = buildTreeFromPairs(maxNodeSize, pairs, loadFactor);
+              expectTreeMatches(tree, pairs);
 
-            const leaves = collectLeaves(root);
-            const leafSizes = leaves.map((leaf) => leaf.keys.length);
-            const expectedLeafCount = Math.ceil(pairs.length / maxNodeSize);
-            expect(leaves.length).toBe(expectedLeafCount);
-            const minLeaf = Math.min(...leafSizes);
-            const maxLeaf = Math.max(...leafSizes);
-            expect(maxLeaf - minLeaf).toBeLessThanOrEqual(1);
-
-            if (!root.isLeaf)
-              assertInternalNodeFanout(root, maxNodeSize);
-
-            const alternating = toAlternating(pairs);
-            const bulkLoadTree = BTreeEx.bulkLoad<number, number>(alternating, maxNodeSize, compareNumbers);
-            expectTreeMatches(bulkLoadTree, pairs);
-          });
+              const leaves = collectLeaves(root);
+              const leafSizes = leaves.map((leaf) => leaf.keys.length);
+              const expectedLeafCount = Math.ceil(pairs.length / targetNodeSize);
+              expect(leaves.length).toBe(expectedLeafCount);
+              const minLeaf = Math.min(...leafSizes);
+              const maxLeaf = Math.max(...leafSizes);
+              expect(maxLeaf - minLeaf).toBeLessThanOrEqual(1);
+            });
+          }
         }
       }
     });

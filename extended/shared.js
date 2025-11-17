@@ -4,18 +4,27 @@ exports.checkCanDoSetOperation = exports.branchingFactorErrorMsg = exports.compa
 var b_tree_1 = require("../b+tree");
 /**
  * Flushes entries from an alternating list into leaf nodes.
- * The leaf nodes are packed as tightly as possible while ensuring all
- * nodes are at least 50% full (if more than one leaf is created).
+ * The supplied load factor will be respected if possible, but may be exceeded
+ * to ensure the 50% full rule is maintained.
+ * Note: if < maxNodeSize entries are provided, only one leaf will be created, which may be underfilled.
+ * @param alternatingList The list of entries to flush. This list will be cleared.
+ * @param maxNodeSize The maximum node size (branching factor) for the resulting leaves.
+ * @param onLeafCreation Called when a new leaf is created.
+ * @param loadFactor Desired load factor for created leaves. Must be between 0.5 and 1.0.
+ * @returns The number of leaves created.
  * @internal
  */
-function flushToLeaves(alternatingList, maxNodeSize, onLeafCreation) {
+function flushToLeaves(alternatingList, maxNodeSize, onLeafCreation, loadFactor) {
+    if (loadFactor === void 0) { loadFactor = 0.8; }
     var totalPairs = alternatingCount(alternatingList);
     if (totalPairs === 0)
         return 0;
+    var targetSize = Math.ceil(maxNodeSize * loadFactor);
+    // Ensure we don't make any underfilled nodes unless we have to.
+    var targetLeafCount = totalPairs <= maxNodeSize ? 1 : Math.ceil(totalPairs / targetSize);
     // This method creates as many evenly filled leaves as possible from
     // the pending entries. All will be > 50% full if we are creating more than one leaf.
-    var leafCount = Math.ceil(totalPairs / maxNodeSize);
-    var remainingLeaves = leafCount;
+    var remainingLeaves = targetLeafCount;
     var remaining = totalPairs;
     var pairIndex = 0;
     while (remainingLeaves > 0) {
@@ -33,7 +42,7 @@ function flushToLeaves(alternatingList, maxNodeSize, onLeafCreation) {
         onLeafCreation(leaf);
     }
     alternatingList.length = 0;
-    return leafCount;
+    return targetLeafCount;
 }
 exports.flushToLeaves = flushToLeaves;
 ;

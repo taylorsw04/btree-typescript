@@ -7,7 +7,8 @@ import BTree from '../b+tree';
  * the array is an alternating list of keys and values: [key0, value0, key1, value1, ...].
  * @param maxNodeSize The branching factor (maximum node size) for the resulting tree.
  * @param compare Function to compare keys.
+ * @param loadFactor Desired load factor for created leaves. Must be between 0.5 and 1.0.
  * @returns A new BTree containing the given entries.
- * @throws Error if the entries are not sorted by key in strictly ascending order (duplicates disallowed).
+ * @throws Error if the entries are not sorted by key in strictly ascending order (duplicates disallowed) or if the load factor is out of the allowed range.
  */
-export declare function bulkLoad<K, V>(entries: (K | V)[], maxNodeSize: number, compare: (a: K, b: K) => number): BTree<K, V>;
+export declare function bulkLoad<K, V>(entries: (K | V)[], maxNodeSize: number, compare: (a: K, b: K) => number, loadFactor?: number): BTree<K, V>;

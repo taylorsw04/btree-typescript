@@ -30,12 +30,14 @@ var shared_1 = require("./shared");
  * the array is an alternating list of keys and values: [key0, value0, key1, value1, ...].
  * @param maxNodeSize The branching factor (maximum node size) for the resulting tree.
  * @param compare Function to compare keys.
+ * @param loadFactor Desired load factor for created leaves. Must be between 0.5 and 1.0.
  * @returns A new BTree containing the given entries.
- * @throws Error if the entries are not sorted by key in strictly ascending order (duplicates disallowed).
+ * @throws Error if the entries are not sorted by key in strictly ascending order (duplicates disallowed) or if the load factor is out of the allowed range.
  */
-function bulkLoad(entries, maxNodeSize, compare) {
+function bulkLoad(entries, maxNodeSize, compare, loadFactor) {
+    if (loadFactor === void 0) { loadFactor = 0.8; }
     var alternatingEntries = entries;
-    var root = bulkLoadRoot(alternatingEntries, maxNodeSize, compare);
+    var root = bulkLoadRoot(alternatingEntries, maxNodeSize, compare, loadFactor);
     var tree = new b_tree_1.default(undefined, compare, maxNodeSize);
     var target = tree;
     target._root = root;
@@ -47,7 +49,10 @@ exports.bulkLoad = bulkLoad;
  * Bulk loads, returns the root node of the resulting tree.
  * @internal
  */
-function bulkLoadRoot(entries, maxNodeSize, compare) {
+function bulkLoadRoot(entries, maxNodeSize, compare, loadFactor) {
+    if (loadFactor === void 0) { loadFactor = 0.8; }
+    if (loadFactor < 0.5 || loadFactor > 1.0)
+        throw new Error("bulkLoad: loadFactor must be between 0.5 and 1.0");
     var totalPairs = (0, shared_1.alternatingCount)(entries);
     if (totalPairs > 1) {
         var previousKey = (0, shared_1.alternatingGetFirst)(entries, 0);
@@ -59,7 +64,7 @@ function bulkLoadRoot(entries, maxNodeSize, compare) {
         }
     }
     var leaves = [];
-    (0, shared_1.flushToLeaves)(entries, maxNodeSize, function (leaf) { return leaves.push(leaf); });
+    (0, shared_1.flushToLeaves)(entries, maxNodeSize, function (leaf) { return leaves.push(leaf); }, loadFactor);
     if (leaves.length === 0)
         return new b_tree_1.BNode();
     var currentLevel = leaves;

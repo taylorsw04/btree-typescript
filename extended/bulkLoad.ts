@@ -9,16 +9,18 @@ import { alternatingCount, alternatingGetFirst, flushToLeaves, type AlternatingL
  * the array is an alternating list of keys and values: [key0, value0, key1, value1, ...].
  * @param maxNodeSize The branching factor (maximum node size) for the resulting tree.
  * @param compare Function to compare keys.
+ * @param loadFactor Desired load factor for created leaves. Must be between 0.5 and 1.0.
  * @returns A new BTree containing the given entries.
- * @throws Error if the entries are not sorted by key in strictly ascending order (duplicates disallowed).
+ * @throws Error if the entries are not sorted by key in strictly ascending order (duplicates disallowed) or if the load factor is out of the allowed range.
  */
 export function bulkLoad<K, V>(
   entries: (K | V)[],
   maxNodeSize: number,
-  compare: (a: K, b: K) => number
+  compare: (a: K, b: K) => number,
+  loadFactor = 0.8
 ): BTree<K, V> {
   const alternatingEntries = entries as AlternatingList<K, V>;
-  const root = bulkLoadRoot<K, V>(alternatingEntries, maxNodeSize, compare);
+  const root = bulkLoadRoot<K, V>(alternatingEntries, maxNodeSize, compare, loadFactor);
   const tree = new BTree<K, V>(undefined, compare, maxNodeSize);
   const target = tree as unknown as BTreeWithInternals<K, V>;
   target._root = root;
@@ -33,8 +35,12 @@ export function bulkLoad<K, V>(
 export function bulkLoadRoot<K, V>(
   entries: AlternatingList<K, V>,
   maxNodeSize: number,
-  compare: (a: K, b: K) => number
+  compare: (a: K, b: K) => number,
+  loadFactor = 0.8
 ): BNode<K, V> {
+  if (loadFactor < 0.5 || loadFactor > 1.0)
+    throw new Error("bulkLoad: loadFactor must be between 0.5 and 1.0");
+
   const totalPairs = alternatingCount(entries);
   if (totalPairs > 1) {
     let previousKey = alternatingGetFirst(entries, 0);
@@ -47,7 +53,7 @@ export function bulkLoadRoot<K, V>(
   }
 
   const leaves: BNode<K, V>[] = [];
-  flushToLeaves(entries, maxNodeSize, (leaf) => leaves.push(leaf));
+  flushToLeaves(entries, maxNodeSize, (leaf) => leaves.push(leaf), loadFactor);
   if (leaves.length === 0)
     return new BNode<K, V>();
 
