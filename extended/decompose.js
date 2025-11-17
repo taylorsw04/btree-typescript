@@ -380,7 +380,7 @@ function processSide(branchingFactor, disjoint, spine, start, end, step, sideInd
  * Returns a new root if the root was split, otherwise undefined.
  */
 function appendAndCascade(spine, insertionDepth, branchingFactor, subtree, sideIndex, sideInsertionIndex, splitOffSide) {
-    // We must take care to avoid accidental propagation upward of the size of the inserted su
+    // We must take care to avoid accidental propagation upward of the size of the inserted subtree
     // To do this, we first split nodes upward from the insertion point until we find a node with capacity
     // or create a new root. Since all un-propagated sizes have already been applied to the spine up to this point,
     // inserting at the end ensures no accidental propagation.
@@ -389,7 +389,7 @@ function appendAndCascade(spine, insertionDepth, branchingFactor, subtree, sideI
         var carry = undefined;
         // Determine initially where to insert after any splits
         var insertTarget = spine[insertionDepth];
-        if (insertTarget.keys.length >= branchingFactor) {
+        if (insertTarget.keys.length === branchingFactor) {
             insertTarget = carry = splitOffSide(insertTarget);
         }
         var d = insertionDepth - 1;

@@ -528,7 +528,7 @@ function appendAndCascade<K, V>(
     let carry: BNode<K, V> | undefined = undefined;
     // Determine initially where to insert after any splits
     let insertTarget: BNodeInternal<K, V> = spine[insertionDepth] as BNodeInternal<K, V>;
-    if (insertTarget.keys.length >= branchingFactor) {
+    if (insertTarget.keys.length === branchingFactor) {
       insertTarget = carry = splitOffSide(insertTarget);
     }
 
