@@ -67,14 +67,17 @@ function bulkLoadRoot(entries, maxNodeSize, compare, loadFactor) {
     (0, shared_1.makeLeavesFrom)(entries, maxNodeSize, function (leaf) { return leaves.push(leaf); }, loadFactor);
     if (leaves.length === 0)
         return new b_tree_1.BNode();
+    var targetNodeSize = Math.ceil(maxNodeSize * loadFactor);
+    var exactlyHalf = targetNodeSize === maxNodeSize / 2;
+    var minSize = Math.floor(maxNodeSize / 2);
     var currentLevel = leaves;
     while (currentLevel.length > 1) {
         var nodeCount = currentLevel.length;
-        if (nodeCount <= maxNodeSize) {
+        if (nodeCount <= maxNodeSize && (nodeCount !== maxNodeSize || !exactlyHalf)) {
             currentLevel = [new b_tree_1.BNodeInternal(currentLevel, (0, b_tree_1.sumChildSizes)(currentLevel))];
             break;
         }
-        var nextLevelCount = Math.ceil(nodeCount / maxNodeSize);
+        var nextLevelCount = Math.ceil(nodeCount / targetNodeSize);
         (0, b_tree_1.check)(nextLevelCount > 1);
         var nextLevel = new Array(nextLevelCount);
         var remainingNodes = nodeCount;
@@ -93,7 +96,7 @@ function bulkLoadRoot(entries, maxNodeSize, compare, loadFactor) {
             remainingParents--;
             nextLevel[i] = new b_tree_1.BNodeInternal(children, size);
         }
-        var minSize = Math.floor(maxNodeSize / 2);
+        // If last node is underfilled, balance with left sibling
         var secondLastNode = nextLevel[nextLevelCount - 2];
         var lastNode = nextLevel[nextLevelCount - 1];
         while (lastNode.children.length < minSize)

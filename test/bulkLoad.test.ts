@@ -153,6 +153,15 @@ describe.each(branchingFactors)('bulkLoad fanout %i', (maxNodeSize) => {
     expect(leaves.length).toBe(Math.ceil(pairs.length / maxNodeSize));
     assertInternalNodeFanout(tree['_root'] as BNode<number, number>, maxNodeSize);
   });
+
+  test('entries with 50% load factor, second layer with exactly half full nodes', () => {
+    // Create enough entries to require a second layer that has exactly two nodes when maxNodeSize is even.
+    const entryCount = Math.ceil(maxNodeSize / 2) * maxNodeSize;
+    const keys = makeArray(entryCount, false, 3);
+    const pairs = pairsFromKeys(keys);
+    const { tree } = buildTreeFromPairs(maxNodeSize, pairs, 0.5);
+    expectTreeMatches(tree, pairs);
+  });
 });
 
 describe('BTreeEx.bulkLoad', () => {

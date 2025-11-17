@@ -57,15 +57,19 @@ export function bulkLoadRoot<K, V>(
   if (leaves.length === 0)
     return new BNode<K, V>();
 
+  const targetNodeSize = Math.ceil(maxNodeSize * loadFactor);
+  const exactlyHalf = targetNodeSize === maxNodeSize / 2;
+  const minSize = Math.floor(maxNodeSize / 2);
+
   let currentLevel: BNode<K, V>[] = leaves;
   while (currentLevel.length > 1) {
     const nodeCount = currentLevel.length;
-    if (nodeCount <= maxNodeSize) {
+    if (nodeCount <= maxNodeSize && (nodeCount !== maxNodeSize || !exactlyHalf)) {
       currentLevel = [new BNodeInternal<K, V>(currentLevel, sumChildSizes(currentLevel))];
       break;
     }
 
-    const nextLevelCount = Math.ceil(nodeCount / maxNodeSize);
+    const nextLevelCount = Math.ceil(nodeCount / targetNodeSize);
     check(nextLevelCount > 1);
     const nextLevel = new Array<BNode<K, V>>(nextLevelCount);
     let remainingNodes = nodeCount;
@@ -86,7 +90,7 @@ export function bulkLoadRoot<K, V>(
       nextLevel[i] = new BNodeInternal<K, V>(children, size);
     }
 
-    const minSize = Math.floor(maxNodeSize / 2);
+    // If last node is underfilled, balance with left sibling
     const secondLastNode = nextLevel[nextLevelCount - 2] as BNodeInternal<K, V>;
     const lastNode = nextLevel[nextLevelCount - 1] as BNodeInternal<K, V>;
     while (lastNode.children.length < minSize)
