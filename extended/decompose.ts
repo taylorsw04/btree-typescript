@@ -518,7 +518,7 @@ function appendAndCascade<K, V>(
   sideInsertionIndex: (node: BNodeInternal<K, V>) => number,
   splitOffSide: (node: BNodeInternal<K, V>) => BNodeInternal<K, V>
 ): BNodeInternal<K, V> | undefined {
-  // We must take care to avoid accidental propagation upward of the size of the inserted su
+  // We must take care to avoid accidental propagation upward of the size of the inserted subtree
   // To do this, we first split nodes upward from the insertion point until we find a node with capacity
   // or create a new root. Since all un-propagated sizes have already been applied to the spine up to this point,
   // inserting at the end ensures no accidental propagation.
