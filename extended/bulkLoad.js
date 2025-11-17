@@ -64,7 +64,7 @@ function bulkLoadRoot(entries, maxNodeSize, compare, loadFactor) {
         }
     }
     var leaves = [];
-    (0, shared_1.flushToLeaves)(entries, maxNodeSize, function (leaf) { return leaves.push(leaf); }, loadFactor);
+    (0, shared_1.makeLeavesFrom)(entries, maxNodeSize, function (leaf) { return leaves.push(leaf); }, loadFactor);
     if (leaves.length === 0)
         return new b_tree_1.BNode();
     var currentLevel = leaves;

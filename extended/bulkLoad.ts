@@ -1,5 +1,5 @@
 import BTree, { BNode, BNodeInternal, check, sumChildSizes } from '../b+tree';
-import { alternatingCount, alternatingGetFirst, flushToLeaves, type AlternatingList, type BTreeWithInternals } from './shared';
+import { alternatingCount, alternatingGetFirst, makeLeavesFrom, type AlternatingList, type BTreeWithInternals } from './shared';
 
 /**
  * Loads a B-Tree from a sorted list of entries in bulk. This is faster than inserting
@@ -53,7 +53,7 @@ export function bulkLoadRoot<K, V>(
   }
 
   const leaves: BNode<K, V>[] = [];
-  flushToLeaves(entries, maxNodeSize, (leaf) => leaves.push(leaf), loadFactor);
+  makeLeavesFrom(entries, maxNodeSize, (leaf) => leaves.push(leaf), loadFactor);
   if (leaves.length === 0)
     return new BNode<K, V>();
 

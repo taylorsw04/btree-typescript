@@ -1,5 +1,5 @@
 import BTree, { areOverlapping, BNode, BNodeInternal, check } from '../b+tree';
-import { alternatingCount, alternatingGetFirst, alternatingGetSecond, alternatingPush, BTreeConstructor, createAlternatingList, flushToLeaves, type AlternatingList, type BTreeWithInternals } from './shared';
+import { alternatingCount, alternatingGetFirst, alternatingGetSecond, alternatingPush, BTreeConstructor, createAlternatingList, makeLeavesFrom, type AlternatingList, type BTreeWithInternals } from './shared';
 import { createCursor, getKey, Cursor, moveForwardOne, moveTo, noop } from "./parallelWalk";
 
 /**
@@ -57,7 +57,9 @@ export function decompose<K, V>(
   }
 
   const addSharedNodeToDisjointSet = (node: BNode<K, V>, height: number) => {
-    flushToLeaves(pending, maxNodeSize, onLeafCreation);
+    makeLeavesFrom(pending, maxNodeSize, onLeafCreation);
+    // flush pending entries
+    pending.length = 0;
     node.isShared = true;
     alternatingPush(disjoint, height, node);
     if (height > tallestHeight) {
@@ -344,7 +346,7 @@ export function decompose<K, V>(
   }
 
   // Ensure any trailing non-disjoint entries are added
-  const createdLeaves = flushToLeaves(pending, maxNodeSize, onLeafCreation);
+  const createdLeaves = makeLeavesFrom(pending, maxNodeSize, onLeafCreation);
   // In fully interleaved cases, no leaves may be created until now
   if (tallestHeight < 0 && createdLeaves > 0) {
     tallestIndex = alternatingCount(disjoint) - 1;

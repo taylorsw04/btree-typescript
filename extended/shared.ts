@@ -19,18 +19,18 @@ export type BTreeWithInternals<K, V, TBTree extends BTree<K, V> = BTree<K, V>> =
 export type AlternatingList<A, B> = Array<A | B>;
 
 /**
- * Flushes entries from an alternating list into leaf nodes.
+ * Builds leaves from the given alternating list of entries.
  * The supplied load factor will be respected if possible, but may be exceeded
  * to ensure the 50% full rule is maintained.
  * Note: if < maxNodeSize entries are provided, only one leaf will be created, which may be underfilled.
- * @param alternatingList The list of entries to flush. This list will be cleared.
+ * @param alternatingList The list of entries to build leaves from.
  * @param maxNodeSize The maximum node size (branching factor) for the resulting leaves.
  * @param onLeafCreation Called when a new leaf is created.
  * @param loadFactor Desired load factor for created leaves. Must be between 0.5 and 1.0.
  * @returns The number of leaves created.
  * @internal
  */
-export function flushToLeaves<K, V>(
+export function makeLeavesFrom<K, V>(
   alternatingList: AlternatingList<K, V>,
   maxNodeSize: number,
   onLeafCreation: (node: BNode<K, V>) => void,
@@ -63,7 +63,6 @@ export function flushToLeaves<K, V>(
     const leaf = new BNode<K, V>(keys, vals);
     onLeafCreation(leaf);
   }
-  alternatingList.length = 0;
   return targetLeafCount;
 };
 

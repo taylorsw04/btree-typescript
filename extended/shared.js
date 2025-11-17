@@ -1,20 +1,20 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.checkCanDoSetOperation = exports.branchingFactorErrorMsg = exports.comparatorErrorMsg = exports.alternatingPush = exports.alternatingGetSecond = exports.alternatingGetFirst = exports.alternatingCount = exports.createAlternatingList = exports.flushToLeaves = void 0;
+exports.checkCanDoSetOperation = exports.branchingFactorErrorMsg = exports.comparatorErrorMsg = exports.alternatingPush = exports.alternatingGetSecond = exports.alternatingGetFirst = exports.alternatingCount = exports.createAlternatingList = exports.makeLeavesFrom = void 0;
 var b_tree_1 = require("../b+tree");
 /**
- * Flushes entries from an alternating list into leaf nodes.
+ * Builds leaves from the given alternating list of entries.
  * The supplied load factor will be respected if possible, but may be exceeded
  * to ensure the 50% full rule is maintained.
  * Note: if < maxNodeSize entries are provided, only one leaf will be created, which may be underfilled.
- * @param alternatingList The list of entries to flush. This list will be cleared.
+ * @param alternatingList The list of entries to build leaves from.
  * @param maxNodeSize The maximum node size (branching factor) for the resulting leaves.
  * @param onLeafCreation Called when a new leaf is created.
  * @param loadFactor Desired load factor for created leaves. Must be between 0.5 and 1.0.
  * @returns The number of leaves created.
  * @internal
  */
-function flushToLeaves(alternatingList, maxNodeSize, onLeafCreation, loadFactor) {
+function makeLeavesFrom(alternatingList, maxNodeSize, onLeafCreation, loadFactor) {
     if (loadFactor === void 0) { loadFactor = 0.8; }
     var totalPairs = alternatingCount(alternatingList);
     if (totalPairs === 0)
@@ -41,10 +41,9 @@ function flushToLeaves(alternatingList, maxNodeSize, onLeafCreation, loadFactor)
         var leaf = new b_tree_1.BNode(keys, vals);
         onLeafCreation(leaf);
     }
-    alternatingList.length = 0;
     return targetLeafCount;
 }
-exports.flushToLeaves = flushToLeaves;
+exports.makeLeavesFrom = makeLeavesFrom;
 ;
 // ------- Alternating list helpers -------
 // These helpers manage a list that alternates between two types of entries.

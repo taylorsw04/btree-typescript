@@ -39,7 +39,9 @@ function decompose(left, right, combineFn, ignoreRight) {
         (0, shared_1.alternatingPush)(disjoint, 0, leaf);
     };
     var addSharedNodeToDisjointSet = function (node, height) {
-        (0, shared_1.flushToLeaves)(pending, maxNodeSize, onLeafCreation);
+        (0, shared_1.makeLeavesFrom)(pending, maxNodeSize, onLeafCreation);
+        // flush pending entries
+        pending.length = 0;
         node.isShared = true;
         (0, shared_1.alternatingPush)(disjoint, height, node);
         if (height > tallestHeight) {
@@ -264,7 +266,7 @@ function decompose(left, right, combineFn, ignoreRight) {
         }
     }
     // Ensure any trailing non-disjoint entries are added
-    var createdLeaves = (0, shared_1.flushToLeaves)(pending, maxNodeSize, onLeafCreation);
+    var createdLeaves = (0, shared_1.makeLeavesFrom)(pending, maxNodeSize, onLeafCreation);
     // In fully interleaved cases, no leaves may be created until now
     if (tallestHeight < 0 && createdLeaves > 0) {
         tallestIndex = (0, shared_1.alternatingCount)(disjoint) - 1;

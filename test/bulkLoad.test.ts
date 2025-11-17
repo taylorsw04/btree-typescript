@@ -109,6 +109,12 @@ describe.each(branchingFactors)('bulkLoad fanout %i', (maxNodeSize) => {
     expect(root.keys.length).toBe(maxNodeSize);
   });
 
+  test('does not mutate the supplied entry list', () => {
+    const pairs = sequentialPairs(maxNodeSize, 0, 2);
+    buildTreeFromPairs(maxNodeSize, pairs, 0.6);
+    expect(pairs.length).toBe(maxNodeSize);
+  });
+
   test('throws when load factor is too low or too high', () => {
       const pairs = sequentialPairs(maxNodeSize, 0, 2);
       const alternating = toAlternating(pairs);
