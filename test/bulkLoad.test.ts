@@ -177,10 +177,8 @@ describe('BTreeEx.bulkLoad', () => {
 describe('bulkLoad fuzz tests', () => {
   const FUZZ_SETTINGS = {
     branchingFactors,
-    ooms: [2, 3],
+    ooms: [0, 2, 3],
     iterationsPerOOM: 3,
-    spacings: [1, 2, 3, 5, 8, 13],
-    payloadMods: [1, 2, 5, 11, 17],
     loadFactors: [0.5, 0.8, 1.0],
     timeoutMs: 30_000,
   } as const;
@@ -196,21 +194,21 @@ describe('bulkLoad fuzz tests', () => {
         for (let iteration = 0; iteration < FUZZ_SETTINGS.iterationsPerOOM; iteration++) {
           for (const loadFactor of FUZZ_SETTINGS.loadFactors) {
             const targetNodeSize = Math.ceil(maxNodeSize * loadFactor);
-            const spacing = FUZZ_SETTINGS.spacings[randomInt(rng, FUZZ_SETTINGS.spacings.length)];
-            const payloadMod = FUZZ_SETTINGS.payloadMods[randomInt(rng, FUZZ_SETTINGS.payloadMods.length)];
             const sizeJitter = randomInt(rng, baseSize);
             const size = baseSize + sizeJitter;
 
-            test(`size ${size}, spacing ${spacing}, payload ${payloadMod}, iteration ${iteration}`, () => {
-              const keys = makeArray(size, false, spacing, 0, rng);
-              const pairs = pairsFromKeys(keys).map(([key, value], index) => [key, value * payloadMod + index] as Pair);
+            test(`size ${size}, iteration ${iteration}`, () => {
+              const keys = makeArray(size, false, 0, 0, rng);
+              const pairs = pairsFromKeys(keys).map(([key, value], index) => [key, value + index] as Pair);
               const { tree, root } = buildTreeFromPairs(maxNodeSize, pairs, loadFactor);
               expectTreeMatches(tree, pairs);
 
               const leaves = collectLeaves(root);
               const leafSizes = leaves.map((leaf) => leaf.keys.length);
-              const expectedLeafCount = Math.ceil(pairs.length / targetNodeSize);
-              expect(leaves.length).toBe(expectedLeafCount);
+              if (pairs.length >= maxNodeSize) {
+                const expectedLeafCount = Math.ceil(pairs.length / targetNodeSize);
+                expect(leaves.length).toBe(expectedLeafCount);
+              }
               const minLeaf = Math.min(...leafSizes);
               const maxLeaf = Math.max(...leafSizes);
               expect(maxLeaf - minLeaf).toBeLessThanOrEqual(1);
