@@ -386,7 +386,7 @@ export function buildFromDecomposition<TBTree extends BTree<K, V>, K, V>(
   const initialRoot = alternatingGetSecond(disjoint, tallestIndex);
   const frontier: BNode<K, V>[] = [initialRoot];
 
-  const rightContext: SideMergeContext<K, V> = {
+  const rightContext: SideContext<K, V> = {
     branchingFactor,
     spine: frontier,
     sideIndex: getRightmostIndex,
@@ -407,7 +407,7 @@ export function buildFromDecomposition<TBTree extends BTree<K, V>, K, V>(
     );
   }
 
-  const leftContext: SideMergeContext<K, V> = {
+  const leftContext: SideContext<K, V> = {
     branchingFactor,
     spine: frontier,
     sideIndex: getLeftmostIndex,
@@ -448,7 +448,7 @@ function processSide<K, V>(
   start: number,
   end: number,
   step: number,
-  context: SideMergeContext<K, V>
+  context: SideContext<K, V>
 ): void {
   const { spine, sideIndex } = context;
   // Determine the depth of the first shared node on the frontier.
@@ -546,7 +546,7 @@ function processSide<K, V>(
  * Returns a new root if the root was split, otherwise undefined.
  */
 function splitUpwardsAndInsert<K, V>(
-  context: SideMergeContext<K, V>,
+  context: SideContext<K, V>,
   insertionDepth: number,
   subtree: BNode<K, V>
 ): BNodeInternal<K, V> | undefined {
@@ -609,7 +609,7 @@ function splitUpwardsAndInsert<K, V>(
 };
 
 function splitUpwardsAndInsertEntries<K, V>(
-  context: SideMergeContext<K, V>,
+  context: SideContext<K, V>,
   insertionDepth: number,
   entryContainer: BNode<K, V>
 ): BNodeInternal<K, V> | undefined {
@@ -636,7 +636,7 @@ function splitUpwardsAndInsertEntries<K, V>(
  * Short-circuits if first shared node is deeper than depthTo (the insertion depth).
  */
 function ensureNotShared<K, V>(
-  context: SideMergeContext<K, V>,
+  context: SideContext<K, V>,
   isSharedFrontierDepth: number,
   depthToInclusive: number) {
   const { spine, sideIndex } = context;
@@ -663,7 +663,7 @@ function ensureNotShared<K, V>(
  * Propagates size updates and updates max keys for nodes in (isSharedFrontierDepth, depthTo)
  */
 function updateSizeAndMax<K, V>(
-  context: SideMergeContext<K, V>,
+  context: SideContext<K, V>,
   unflushedSizes: number[],
   isSharedFrontierDepth: number,
   depthUpToInclusive: number) {
@@ -691,7 +691,7 @@ function updateSizeAndMax<K, V>(
  * Update a spine (frontier) from a specific depth down, inclusive.
  * Extends the frontier array if it is not already as long as the frontier.
  */
-function updateFrontier<K, V>(context: SideMergeContext<K, V>, depthLastValid: number): void {
+function updateFrontier<K, V>(context: SideContext<K, V>, depthLastValid: number): void {
   const { spine: frontier, sideIndex } = context;
   check(frontier.length > depthLastValid, "updateFrontier: depthLastValid exceeds frontier height");
   const startingAncestor = frontier[depthLastValid];
@@ -712,7 +712,7 @@ function updateFrontier<K, V>(context: SideMergeContext<K, V>, depthLastValid: n
 /**
  * Find the first ancestor (starting at insertionDepth) with capacity.
  */
-function findSplitCascadeEndDepth<K, V>(context: SideMergeContext<K, V>, insertionDepth: number, insertionCount: number): number {
+function findSplitCascadeEndDepth<K, V>(context: SideContext<K, V>, insertionDepth: number, insertionCount: number): number {
   const { spine, branchingFactor } = context;
   if (insertionDepth >= 0) {
     let depth = insertionDepth;
@@ -777,7 +777,7 @@ function mergeLeftEntries<K, V>(leaf: BNode<K, V>, entries: BNode<K, V>): void{
   leaf.values.unshift.apply(leaf.values, entries.values);
 }
 
-type SideMergeContext<K, V> = {
+type SideContext<K, V> = {
   branchingFactor: number;
   spine: BNode<K, V>[];
   sideIndex: (node: BNodeInternal<K, V>) => number;
