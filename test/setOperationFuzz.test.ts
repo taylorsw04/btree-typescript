@@ -57,6 +57,10 @@ describe('Set operation fuzz tests', () => {
                   treeC.set(value, value);
               }
 
+              const treeAInitial = treeA.toArray();
+              const treeBInitial = treeB.toArray();
+              const treeCInitial = treeC.toArray();
+
               const keepEither = (_k: number, left: number, _right: number) => left;
               const dropValue = () => undefined;
               const combineSum = (_k: number, left: number, right: number) => left + right;
@@ -138,6 +142,10 @@ describe('Set operation fuzz tests', () => {
               treeA.checkValid();
               treeB.checkValid();
               treeC.checkValid();
+
+              expect(treeA.toArray()).toEqual(treeAInitial);
+              expect(treeB.toArray()).toEqual(treeBInitial);
+              expect(treeC.toArray()).toEqual(treeCInitial);
             });
           }
         }
