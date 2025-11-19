@@ -302,13 +302,14 @@ function buildFromDecomposition(constructor, branchingFactor, decomposed, cmp, m
         sideIndex: getRightmostIndex,
         sideInsertionIndex: getRightInsertionIndex,
         splitOffSide: splitOffRightSide,
+        balanceLeaves: balanceLeavesRight,
         updateMax: updateRightMax,
         mergeLeaves: mergeRightEntries
     };
     // Process all subtrees to the right of the tallest subtree
     if (tallestIndex + 1 <= disjointEntryCount - 1) {
         updateFrontier(rightContext, 0);
-        processSide(cmp, disjoint, tallestIndex + 1, disjointEntryCount, 1, rightContext);
+        processSide(disjoint, tallestIndex + 1, disjointEntryCount, 1, rightContext);
     }
     var leftContext = {
         branchingFactor: branchingFactor,
@@ -316,6 +317,7 @@ function buildFromDecomposition(constructor, branchingFactor, decomposed, cmp, m
         sideIndex: getLeftmostIndex,
         sideInsertionIndex: getLeftmostIndex,
         splitOffSide: splitOffLeftSide,
+        balanceLeaves: balanceLeavesLeft,
         updateMax: parallelWalk_1.noop,
         mergeLeaves: mergeLeftEntries
     };
@@ -323,7 +325,7 @@ function buildFromDecomposition(constructor, branchingFactor, decomposed, cmp, m
     if (tallestIndex - 1 >= 0) {
         // Note we need to update the frontier here because the right-side processing may have grown the tree taller.
         updateFrontier(leftContext, 0);
-        processSide(cmp, disjoint, tallestIndex - 1, -1, -1, leftContext);
+        processSide(disjoint, tallestIndex - 1, -1, -1, leftContext);
     }
     var reconstructed = new constructor(undefined, cmp, maxNodeSize);
     reconstructed._root = frontier[0];
@@ -336,7 +338,7 @@ exports.buildFromDecomposition = buildFromDecomposition;
  * Merges each subtree in the disjoint set from start to end (exclusive) into the given spine.
  * @internal
  */
-function processSide(cmp, disjoint, start, end, step, context) {
+function processSide(disjoint, start, end, step, context) {
     var spine = context.spine, sideIndex = context.sideIndex;
     // Determine the depth of the first shared node on the frontier.
     // Appending subtrees to the frontier must respect the copy-on-write semantics by cloning
@@ -376,9 +378,10 @@ function processSide(cmp, disjoint, start, end, step, context) {
             insertionCount = 1;
             insertionSize = subtree.size();
         }
+        var cascadeEndDepth = findSplitCascadeEndDepth(context, insertionDepth, insertionCount);
         // Calculate expansion depth (first ancestor with capacity)
         var expansionDepth = Math.max(0, // -1 indicates we will cascade to new root
-        findSplitCascadeEndDepth(context, insertionDepth, insertionCount));
+        cascadeEndDepth);
         // Update sizes on spine above the shared ancestor before we expand
         updateSizeAndMax(context, unflushedSizes, isSharedFrontierDepth, expansionDepth);
         var newRoot = undefined;
@@ -389,7 +392,7 @@ function processSide(cmp, disjoint, start, end, step, context) {
             sizeChangeDepth = insertionDepth - 1;
         }
         else {
-            newRoot = splitUpwardsAndInsert(context, insertionDepth, subtree);
+            newRoot = splitUpwardsAndInsert(context, insertionDepth, subtree)[0];
             sizeChangeDepth = insertionDepth;
         }
         if (newRoot) {
@@ -410,8 +413,9 @@ function processSide(cmp, disjoint, start, end, step, context) {
         updateFrontier(context, expansionDepth);
         (0, b_tree_1.check)(isSharedFrontierDepth === spine.length - 1 || spine[isSharedFrontierDepth].isShared === true, "Non-leaf subtrees must be shared.");
         (0, b_tree_1.check)(unflushedSizes.length === spine.length, "Unflushed sizes length mismatch after root split.");
-        // updateSizeAndMax(context, unflushedSizes, spine.length - 1, 0);
-        // spine[0].checkValid(0, { _compare: cmp } as unknown as BTree<K, V>, 0);
+        // Useful for debugging:
+        //updateSizeAndMax(context, unflushedSizes, spine.length - 1, 0);
+        //spine[0].checkValid(0, { _compare: cmp } as unknown as BTree<K, V>, 0);
     }
     // Finally, propagate any remaining unflushed sizes upward and update max keys
     updateSizeAndMax(context, unflushedSizes, isSharedFrontierDepth, 0);
@@ -421,7 +425,7 @@ function processSide(cmp, disjoint, start, end, step, context) {
  * Cascade splits upward if capacity needed, then append a subtree at a given depth on the chosen side.
  * All un-propagated sizes must have already been applied to the spine up to the end of any cascading expansions.
  * This method guarantees that the size of the inserted subtree will not propagate upward beyond the insertion point.
- * Returns a new root if the root was split, otherwise undefined.
+ * Returns a new root if the root was split, otherwise undefined, and the node into which the subtree was inserted.
  */
 function splitUpwardsAndInsert(context, insertionDepth, subtree) {
     var spine = context.spine, branchingFactor = context.branchingFactor, sideIndex = context.sideIndex, sideInsertionIndex = context.sideInsertionIndex, splitOffSide = context.splitOffSide, updateMax = context.updateMax;
@@ -453,7 +457,7 @@ function splitUpwardsAndInsert(context, insertionDepth, subtree) {
                 // Example: a node is at max capacity 4, with children each of size 4 for 16 total.
                 // We split the node into two nodes of 2 children each, but this does *not* modify the size
                 // of its parent. Therefore when we insert the carry into the torn-off node, we must not
-                // increase its size or we will double-count the size of the carry su
+                // increase its size or we will double-count the size of the carry subtree.
                 var tornOff = splitOffSide(parent);
                 insertNoCount(tornOff, sideInsertionIndex(tornOff), carry);
                 carry = tornOff;
@@ -469,19 +473,19 @@ function splitUpwardsAndInsert(context, insertionDepth, subtree) {
         }
         // Finally, insert the subtree at the insertion point
         insertNoCount(insertTarget, sideInsertionIndex(insertTarget), subtree);
-        return newRoot;
+        return [newRoot, insertTarget];
     }
     else {
         // Insertion of subtree with equal height to current tree
         var oldRoot = spine[0];
         var newRoot = new b_tree_1.BNodeInternal([oldRoot], oldRoot.size());
         insertNoCount(newRoot, sideInsertionIndex(newRoot), subtree);
-        return newRoot;
+        return [newRoot, newRoot];
     }
 }
 ;
 function splitUpwardsAndInsertEntries(context, insertionDepth, entryContainer) {
-    var branchingFactor = context.branchingFactor, spine = context.spine, mergeLeaves = context.mergeLeaves;
+    var branchingFactor = context.branchingFactor, spine = context.spine, balanceLeaves = context.balanceLeaves, mergeLeaves = context.mergeLeaves;
     var entryCount = entryContainer.keys.length;
     var parent = spine[insertionDepth];
     var parentSize = parent.keys.length;
@@ -490,9 +494,13 @@ function splitUpwardsAndInsertEntries(context, insertionDepth, entryContainer) {
         return undefined;
     }
     else {
+        // As with the internal node splitUpwardsAndInsert method, this method also must make all structural changes
+        // to the tree before inserting any new content. This is to avoid accidental propagation of sizes upward.
+        var _a = splitUpwardsAndInsert(context, insertionDepth - 1, entryContainer), newRoot = _a[0], grandparent = _a[1];
         var minSize = Math.floor(branchingFactor / 2);
         var toTake = minSize - entryCount;
-        return splitUpwardsAndInsert(context, insertionDepth - 1, entryContainer);
+        balanceLeaves(grandparent, entryContainer, toTake);
+        return newRoot;
     }
 }
 /**
@@ -606,6 +614,24 @@ function splitOffRightSide(node) {
 }
 function splitOffLeftSide(node) {
     return node.splitOffLeftSide();
+}
+function balanceLeavesRight(parent, underfilled, toTake) {
+    var siblingIndex = parent.children.length - 2;
+    var sibling = parent.children[siblingIndex];
+    var index = sibling.keys.length - toTake;
+    var movedKeys = sibling.keys.splice(index);
+    var movedValues = sibling.values.splice(index);
+    underfilled.keys.unshift.apply(underfilled.keys, movedKeys);
+    underfilled.values.unshift.apply(underfilled.values, movedValues);
+    parent.keys[siblingIndex] = sibling.maxKey();
+}
+function balanceLeavesLeft(parent, underfilled, toTake) {
+    var sibling = parent.children[1];
+    var movedKeys = sibling.keys.splice(0, toTake);
+    var movedValues = sibling.values.splice(0, toTake);
+    underfilled.keys.push.apply(underfilled.keys, movedKeys);
+    underfilled.values.push.apply(underfilled.values, movedValues);
+    parent.keys[0] = underfilled.maxKey();
 }
 function updateRightMax(node, maxBelow) {
     node.keys[node.keys.length - 1] = maxBelow;

@@ -392,6 +392,7 @@ export function buildFromDecomposition<TBTree extends BTree<K, V>, K, V>(
     sideIndex: getRightmostIndex,
     sideInsertionIndex: getRightInsertionIndex,
     splitOffSide: splitOffRightSide,
+    balanceLeaves: balanceLeavesRight,
     updateMax: updateRightMax,
     mergeLeaves: mergeRightEntries
   };
@@ -399,7 +400,6 @@ export function buildFromDecomposition<TBTree extends BTree<K, V>, K, V>(
   if (tallestIndex + 1 <= disjointEntryCount - 1) {
     updateFrontier(rightContext, 0);
     processSide(
-      cmp,
       disjoint,
       tallestIndex + 1,
       disjointEntryCount, 1,
@@ -413,6 +413,7 @@ export function buildFromDecomposition<TBTree extends BTree<K, V>, K, V>(
     sideIndex: getLeftmostIndex,
     sideInsertionIndex: getLeftmostIndex,
     splitOffSide: splitOffLeftSide,
+    balanceLeaves: balanceLeavesLeft,
     updateMax: noop, // left side appending doesn't update max keys,
     mergeLeaves: mergeLeftEntries
   };
@@ -421,7 +422,6 @@ export function buildFromDecomposition<TBTree extends BTree<K, V>, K, V>(
     // Note we need to update the frontier here because the right-side processing may have grown the tree taller.
     updateFrontier(leftContext, 0);
     processSide(
-      cmp,
       disjoint,
       tallestIndex - 1,
       -1,
@@ -443,7 +443,6 @@ export function buildFromDecomposition<TBTree extends BTree<K, V>, K, V>(
  * @internal
  */
 function processSide<K, V>(
-  cmp: (a: K, b: K) => number,
   disjoint: AlternatingList<number, BNode<K, V>>,
   start: number,
   end: number,
@@ -493,10 +492,12 @@ function processSide<K, V>(
       insertionSize = subtree.size();
     }
 
+    const cascadeEndDepth = findSplitCascadeEndDepth(context, insertionDepth, insertionCount);
+
     // Calculate expansion depth (first ancestor with capacity)
     const expansionDepth = Math.max(
       0, // -1 indicates we will cascade to new root
-      findSplitCascadeEndDepth(context, insertionDepth, insertionCount)
+      cascadeEndDepth
     );
 
     // Update sizes on spine above the shared ancestor before we expand
@@ -509,7 +510,7 @@ function processSide<K, V>(
       // if we are inserting entries, we don't have to update a cached size on the leaf as they simply return count of keys
       sizeChangeDepth = insertionDepth - 1;
     } else {
-      newRoot = splitUpwardsAndInsert(context, insertionDepth, subtree);
+      [newRoot] = splitUpwardsAndInsert(context, insertionDepth, subtree);
       sizeChangeDepth = insertionDepth;
     }
 
@@ -531,8 +532,9 @@ function processSide<K, V>(
     updateFrontier(context, expansionDepth);
     check(isSharedFrontierDepth === spine.length - 1 || spine[isSharedFrontierDepth].isShared === true, "Non-leaf subtrees must be shared.");
     check(unflushedSizes.length === spine.length, "Unflushed sizes length mismatch after root split.");
-    // updateSizeAndMax(context, unflushedSizes, spine.length - 1, 0);
-    // spine[0].checkValid(0, { _compare: cmp } as unknown as BTree<K, V>, 0);
+    // Useful for debugging:
+    //updateSizeAndMax(context, unflushedSizes, spine.length - 1, 0);
+    //spine[0].checkValid(0, { _compare: cmp } as unknown as BTree<K, V>, 0);
   }
 
   // Finally, propagate any remaining unflushed sizes upward and update max keys
@@ -543,13 +545,13 @@ function processSide<K, V>(
  * Cascade splits upward if capacity needed, then append a subtree at a given depth on the chosen side.
  * All un-propagated sizes must have already been applied to the spine up to the end of any cascading expansions.
  * This method guarantees that the size of the inserted subtree will not propagate upward beyond the insertion point.
- * Returns a new root if the root was split, otherwise undefined.
+ * Returns a new root if the root was split, otherwise undefined, and the node into which the subtree was inserted.
  */
 function splitUpwardsAndInsert<K, V>(
   context: SideContext<K, V>,
   insertionDepth: number,
   subtree: BNode<K, V>
-): BNodeInternal<K, V> | undefined {
+): [newRoot: BNodeInternal<K, V> | undefined, insertTarget: BNodeInternal<K, V>] {
   const { spine, branchingFactor, sideIndex, sideInsertionIndex, splitOffSide, updateMax } = context;
   // We must take care to avoid accidental propagation upward of the size of the inserted subtree
   // To do this, we first split nodes upward from the insertion point until we find a node with capacity
@@ -580,7 +582,7 @@ function splitUpwardsAndInsert<K, V>(
         // Example: a node is at max capacity 4, with children each of size 4 for 16 total.
         // We split the node into two nodes of 2 children each, but this does *not* modify the size
         // of its parent. Therefore when we insert the carry into the torn-off node, we must not
-        // increase its size or we will double-count the size of the carry su
+        // increase its size or we will double-count the size of the carry subtree.
         const tornOff = splitOffSide(parent);
         insertNoCount(tornOff, sideInsertionIndex(tornOff), carry);
         carry = tornOff;
@@ -598,13 +600,13 @@ function splitUpwardsAndInsert<K, V>(
 
     // Finally, insert the subtree at the insertion point
     insertNoCount(insertTarget, sideInsertionIndex(insertTarget), subtree);
-    return newRoot;
+    return [newRoot, insertTarget];
   } else {
     // Insertion of subtree with equal height to current tree
     const oldRoot = spine[0] as BNodeInternal<K, V>;
     const newRoot = new BNodeInternal<K, V>([oldRoot], oldRoot.size());
     insertNoCount(newRoot, sideInsertionIndex(newRoot), subtree);
-    return newRoot;
+    return [newRoot, newRoot];
   }
 };
 
@@ -613,7 +615,7 @@ function splitUpwardsAndInsertEntries<K, V>(
   insertionDepth: number,
   entryContainer: BNode<K, V>
 ): BNodeInternal<K, V> | undefined {
-  const { branchingFactor, spine, mergeLeaves } = context;
+  const { branchingFactor, spine, balanceLeaves, mergeLeaves } = context;
   const entryCount = entryContainer.keys.length;
   const parent = spine[insertionDepth];
   const parentSize = parent.keys.length;
@@ -621,13 +623,17 @@ function splitUpwardsAndInsertEntries<K, V>(
     mergeLeaves(parent, entryContainer);
     return undefined;
   } else {
-    const minSize = Math.floor(branchingFactor / 2);
-    const toTake = minSize - entryCount;
-    return splitUpwardsAndInsert(
+    // As with the internal node splitUpwardsAndInsert method, this method also must make all structural changes
+    // to the tree before inserting any new content. This is to avoid accidental propagation of sizes upward.
+    const [newRoot, grandparent] = splitUpwardsAndInsert(
       context,
       insertionDepth - 1,
       entryContainer
     );
+    const minSize = Math.floor(branchingFactor / 2);
+    const toTake = minSize - entryCount;
+    balanceLeaves(grandparent, entryContainer, toTake);
+    return newRoot;
   }
 }
 
@@ -763,6 +769,26 @@ function splitOffLeftSide<K, V>(node: BNodeInternal<K, V>): BNodeInternal<K, V> 
   return node.splitOffLeftSide();
 }
 
+function balanceLeavesRight<K,V>(parent: BNodeInternal<K,V>, underfilled: BNode<K, V>, toTake: number): void {
+  const siblingIndex = parent.children.length - 2;
+  const sibling = parent.children[siblingIndex];
+  const index = sibling.keys.length - toTake;
+  const movedKeys = sibling.keys.splice(index);
+  const movedValues = sibling.values.splice(index);
+  underfilled.keys.unshift.apply(underfilled.keys, movedKeys);
+  underfilled.values.unshift.apply(underfilled.values, movedValues);
+  parent.keys[siblingIndex] = sibling.maxKey();
+}
+
+function balanceLeavesLeft<K,V>(parent: BNodeInternal<K,V>, underfilled: BNode<K, V>, toTake: number): void {
+  const sibling = parent.children[1];
+  const movedKeys = sibling.keys.splice(0, toTake);
+  const movedValues = sibling.values.splice(0, toTake);
+  underfilled.keys.push.apply(underfilled.keys, movedKeys);
+  underfilled.values.push.apply(underfilled.values, movedValues);
+  parent.keys[0] = underfilled.maxKey();
+}
+
 function updateRightMax<K, V>(node: BNodeInternal<K, V>, maxBelow: K): void {
   node.keys[node.keys.length - 1] = maxBelow;
 }
@@ -785,4 +811,5 @@ type SideContext<K, V> = {
   splitOffSide: (node: BNodeInternal<K, V>) => BNodeInternal<K, V>;
   updateMax: (node: BNodeInternal<K, V>, maxBelow: K) => void;
   mergeLeaves: (leaf: BNode<K, V>, entries: BNode<K, V>) => void;
+  balanceLeaves: (parent: BNodeInternal<K,V>, underfilled: BNode<K, V>, toTake: number) => void;
 };
