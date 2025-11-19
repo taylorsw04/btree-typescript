@@ -3,7 +3,7 @@ import BTreeEx from '../extended';
 import union from '../extended/union';
 import { branchingFactorErrorMsg, comparatorErrorMsg } from '../extended/shared';
 import MersenneTwister from 'mersenne-twister';
-import { makeArray, randomInt } from './shared';
+import { countTreeNodeStats, makeArray, randomInt } from './shared';
 
 var test: (name: string, f: () => void) => void = it;
 
@@ -819,6 +819,8 @@ describe('BTree union fuzz tests', () => {
               // Check for shared mutability issues
               expect(treeA.toArray()).toEqual(aArray);
               expect(treeB.toArray()).toEqual(bArray);
+              const unionStats = countTreeNodeStats(unioned);
+              expect(unionStats.newUnderfilled).toBe(0);
             });
           }
         }

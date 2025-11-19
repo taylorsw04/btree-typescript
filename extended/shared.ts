@@ -1,5 +1,4 @@
-import { BNode } from '../b+tree';
-import BTree from '../b+tree';
+import BTree, { BNode } from '../b+tree';
 
 /**
  * BTree with access to internal properties.

@@ -1,5 +1,5 @@
 #!/usr/bin/env ts-node
-import BTree, { BNode, BNodeInternal } from '.';
+import BTree from '.';
 import BTreeEx from './extended';
 import SortedArray from './sorted-array';
 import forEachKeyNotIn from './extended/forEachKeyNotIn';
@@ -9,7 +9,7 @@ import subtract from './extended/subtract';
 // randomized data, but it becomes extremely slow when filled with sorted 
 // data, so it's not usually a good choice.
 import {RBTree} from 'bintrees';
-import { BTreeWithInternals } from './extended/shared';
+import { countTreeNodeStats, logTreeNodeStats } from './test/shared';
 const SortedSet = require("collections/sorted-set");         // Bad type definition: missing 'length'
 const SortedMap = require("collections/sorted-map");         // No type definitions available
 const functionalTree = require("functional-red-black-tree"); // No type definitions available
@@ -47,45 +47,6 @@ function measure<T=void>(message: (t:T) => string, callback: () => T, minMillise
   ms /= counter;
   log((Math.round(ms * 10) / 10) + "\t" + message(result));
   return result;
-}
-
-type TreeNodeStats = { total: number, shared: number, underfilled: number };
-
-function countTreeNodeStats(tree: BTree<any, any>): TreeNodeStats {
-  const root = (tree as unknown as BTreeWithInternals<any, any>)._root;
-  if (tree.size === 0)
-    return { total: 0, shared: 0, underfilled: 0 };
-
-  const maxNodeSize = tree.maxNodeSize;
-  const minNodeSize = Math.floor(maxNodeSize / 2);
-
-  const visit = (node: BNode<any, any>, ancestorShared: boolean, isRoot: boolean): TreeNodeStats => {
-    if (!node)
-      return { total: 0, shared: 0, underfilled: 0 };
-    const selfShared = node.isShared === true || ancestorShared;
-    const children: BNode<any, any>[] | undefined = (node as BNodeInternal<any, any>).children;
-    const occupancy = children ? children.length : node.keys.length;
-    const isUnderfilled = !isRoot && occupancy < minNodeSize;
-    let shared = selfShared ? 1 : 0;
-    let total = 1;
-    let underfilled = isUnderfilled ? 1 : 0;
-    if (children) {
-      for (const child of children) {
-        const stats = visit(child, selfShared, false);
-        total += stats.total;
-        shared += stats.shared;
-        underfilled += stats.underfilled;
-      }
-    }
-    return { total, shared, underfilled };
-  };
-
-  return visit(root, false, true);
-}
-
-function logTreeNodeStats(label: string, stats: TreeNodeStats) {
-  console.log(`\tShared nodes (${label}): ${stats.shared}/${stats.total}`);
-  console.log(`\tUnderfilled nodes (${label}): ${stats.underfilled}/${stats.total}`);
 }
 
 function intersectBySorting(
