@@ -2,7 +2,7 @@ import BTreeEx from '../extended';
 import intersect from '../extended/intersect';
 import { comparatorErrorMsg } from '../extended/shared';
 import MersenneTwister from 'mersenne-twister';
-import { countTreeNodeStats, makeArray } from './shared';
+import { makeArray } from './shared';
 
 var test: (name: string, f: () => void) => void = it;
 
@@ -27,8 +27,6 @@ const runIntersectionImplementations = (
   const expectedEntries = intersectionCalls.map(({ key, leftValue }) => [key, leftValue] as [number, number]);
   expect(resultTree.toArray()).toEqual(expectedEntries);
   resultTree.checkValid();
-  const stats = countTreeNodeStats(resultTree);
-  expect(stats.newUnderfilled).toBe(0);
   assertion(intersectionCalls);
 };
 

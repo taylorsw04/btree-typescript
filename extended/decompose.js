@@ -372,6 +372,7 @@ function processSide(disjoint, start, end, step, context) {
         var insertionCount = void 0; // non-recursive
         var insertionSize = void 0; // recursive
         if (isEntryInsertion) {
+            (0, b_tree_1.check)(subtree.isShared !== true);
             insertionCount = insertionSize = subtree.keys.length;
         }
         else {
@@ -398,15 +399,11 @@ function processSide(disjoint, start, end, step, context) {
         if (newRoot) {
             // Set the spine root to the highest up new node; the rest of the spine is updated below
             spine[0] = newRoot;
-            unflushedSizes.forEach(function (count) { return (0, b_tree_1.check)(count === 0, "Unexpected unflushed size after root split."); });
-            unflushedSizes.push(0); // new root level
-            isSharedFrontierDepth = sizeChangeDepth + 2;
-            unflushedSizes[sizeChangeDepth + 1] += insertionSize;
+            unflushedSizes.push(0); // new root level, keep unflushed sizes in sync
+            sizeChangeDepth++; // account for the spine lengthening
         }
-        else {
-            isSharedFrontierDepth = sizeChangeDepth + 1;
-            unflushedSizes[sizeChangeDepth] += insertionSize;
-        }
+        isSharedFrontierDepth = sizeChangeDepth + 1;
+        unflushedSizes[sizeChangeDepth] += insertionSize;
         // Finally, update the frontier from the highest new node downward
         // Note that this is often the point where the new subtree is attached,
         // but in the case of cascaded splits it may be higher up.
@@ -484,12 +481,16 @@ function splitUpwardsAndInsert(context, insertionDepth, subtree) {
     }
 }
 ;
+/**
+ * Inserts an underfilled leaf (entryContainer), merging with its sibling if possible and splitting upward if not.
+ */
 function splitUpwardsAndInsertEntries(context, insertionDepth, entryContainer) {
     var branchingFactor = context.branchingFactor, spine = context.spine, balanceLeaves = context.balanceLeaves, mergeLeaves = context.mergeLeaves;
     var entryCount = entryContainer.keys.length;
     var parent = spine[insertionDepth];
     var parentSize = parent.keys.length;
     if (parentSize + entryCount <= branchingFactor) {
+        // Sibling has capacity, just merge into it
         mergeLeaves(parent, entryContainer);
         return undefined;
     }

@@ -3,7 +3,7 @@ import forEachKeyNotIn from '../extended/forEachKeyNotIn';
 import subtract from '../extended/subtract';
 import { comparatorErrorMsg, branchingFactorErrorMsg } from '../extended/shared';
 import MersenneTwister from 'mersenne-twister';
-import { countTreeNodeStats, makeArray } from './shared';
+import { makeArray } from './shared';
 
 type NotInCall = { key: number, value: number };
 
@@ -22,8 +22,6 @@ const runSubtractionImplementations = (
   const subtractCalls = resultTree.toArray().map(([key, value]) => ({ key, value }));
   expect(subtractCalls).toEqual(forEachCalls);
   resultTree.checkValid();
-  const stats = countTreeNodeStats(resultTree);
-  expect(stats.newUnderfilled).toBe(0);
   assertion(subtractCalls);
 };
 

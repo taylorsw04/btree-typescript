@@ -4,7 +4,8 @@ import { createCursor, getKey, Cursor, moveForwardOne, moveTo, noop } from "./pa
 
 /**
  * A set of disjoint nodes, their heights, and the index of the tallest node.
- * A height of -1 indicates an underfilled node that must be merged.
+ * A height of -1 indicates an underfilled non-shared node that must be merged.
+ * Any shared nodes (including underfilled leaves) must have height >= 0.
  * @internal
  */
 export type DecomposeResult<K, V> = { disjoint: AlternatingList<number, BNode<K, V>>, tallestIndex: number };
@@ -486,6 +487,7 @@ function processSide<K, V>(
     let insertionCount: number; // non-recursive
     let insertionSize: number; // recursive
     if (isEntryInsertion) {
+      check(subtree.isShared !== true);
       insertionCount = insertionSize = subtree.keys.length;
     } else {
       insertionCount = 1;
@@ -517,14 +519,12 @@ function processSide<K, V>(
     if (newRoot) {
       // Set the spine root to the highest up new node; the rest of the spine is updated below
       spine[0] = newRoot;
-      unflushedSizes.forEach((count) => check(count === 0, "Unexpected unflushed size after root split."));
-      unflushedSizes.push(0); // new root level
-      isSharedFrontierDepth = sizeChangeDepth + 2;
-      unflushedSizes[sizeChangeDepth + 1] += insertionSize;
-    } else {
-      isSharedFrontierDepth = sizeChangeDepth + 1;
-      unflushedSizes[sizeChangeDepth] += insertionSize;
+      unflushedSizes.push(0); // new root level, keep unflushed sizes in sync
+      sizeChangeDepth++; // account for the spine lengthening
     }
+
+    isSharedFrontierDepth = sizeChangeDepth + 1;
+    unflushedSizes[sizeChangeDepth] += insertionSize;
 
     // Finally, update the frontier from the highest new node downward
     // Note that this is often the point where the new subtree is attached,
@@ -610,6 +610,9 @@ function splitUpwardsAndInsert<K, V>(
   }
 };
 
+/**
+ * Inserts an underfilled leaf (entryContainer), merging with its sibling if possible and splitting upward if not.
+ */
 function splitUpwardsAndInsertEntries<K, V>(
   context: SideContext<K, V>,
   insertionDepth: number,
@@ -620,6 +623,7 @@ function splitUpwardsAndInsertEntries<K, V>(
   const parent = spine[insertionDepth];
   const parentSize = parent.keys.length;
   if (parentSize + entryCount <= branchingFactor) {
+    // Sibling has capacity, just merge into it
     mergeLeaves(parent, entryContainer);
     return undefined;
   } else {
@@ -747,6 +751,17 @@ function insertNoCount<K, V>(
   parent.keys.splice(index, 0, child.maxKey());
 }
 
+type SideContext<K, V> = {
+  branchingFactor: number;
+  spine: BNode<K, V>[];
+  sideIndex: (node: BNodeInternal<K, V>) => number;
+  sideInsertionIndex: (node: BNodeInternal<K, V>) => number;
+  splitOffSide: (node: BNodeInternal<K, V>) => BNodeInternal<K, V>;
+  updateMax: (node: BNodeInternal<K, V>, maxBelow: K) => void;
+  mergeLeaves: (leaf: BNode<K, V>, entries: BNode<K, V>) => void;
+  balanceLeaves: (parent: BNodeInternal<K,V>, underfilled: BNode<K, V>, toTake: number) => void;
+};
+
 // ---- Side-specific delegates for merging subtrees into a frontier ----
 
 function getLeftmostIndex<K, V>(): number {
@@ -802,14 +817,3 @@ function mergeLeftEntries<K, V>(leaf: BNode<K, V>, entries: BNode<K, V>): void{
   leaf.keys.unshift.apply(leaf.keys, entries.keys);
   leaf.values.unshift.apply(leaf.values, entries.values);
 }
-
-type SideContext<K, V> = {
-  branchingFactor: number;
-  spine: BNode<K, V>[];
-  sideIndex: (node: BNodeInternal<K, V>) => number;
-  sideInsertionIndex: (node: BNodeInternal<K, V>) => number;
-  splitOffSide: (node: BNodeInternal<K, V>) => BNodeInternal<K, V>;
-  updateMax: (node: BNodeInternal<K, V>, maxBelow: K) => void;
-  mergeLeaves: (leaf: BNode<K, V>, entries: BNode<K, V>) => void;
-  balanceLeaves: (parent: BNodeInternal<K,V>, underfilled: BNode<K, V>, toTake: number) => void;
-};
