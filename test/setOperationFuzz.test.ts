@@ -31,20 +31,20 @@ describe('Set operation fuzz tests', () => {
 
   const rng = new MersenneTwister(0xC0FFEE);
 
-  const count = (t: BTreeEx<number, number>) => t.toArray().length;
+  const count = (t: BTreeEx<number, number>) => t.size;
 
   const applyRemovalRuns = (tree: BTreeEx<number, number>, removalChance: number, branchingFactor: number) => {
     if (removalChance <= 0 || tree.size === 0)
       return;
-    const keys = tree.toArray().map(([key]) => key);
+    const entries = tree.toArray();
     let index = 0;
-    while (index < keys.length) {
-      const key = keys[index];
+    while (index < entries.length) {
+      const key = entries[index][0];
       if (rng.random() < removalChance) {
         tree.delete(key);
         index++;
-        while (index < keys.length) {
-          const candidateKey = keys[index];
+        while (index < entries.length) {
+          const candidateKey = entries[index][0];
           if (rng.random() < (1 / branchingFactor))
             break;
           tree.delete(candidateKey);
@@ -106,11 +106,11 @@ describe('Set operation fuzz tests', () => {
 
                 // 1. Partition of A: A = (A\B) ∪ (A∩B) and parts are disjoint.
                 const partition = diffAB.union(intersection, keepEither);
-                expect(partition.toArray()).toEqual(treeA.toArray());
+                expect(partition.toArray()).toEqual(treeAInitial);
                 expect(diffAB.intersect(intersection, keepEither).size).toBe(0);
 
                 // 2. Recover B from union and A\B: (A∪B)\(A\B) = B.
-                expect(unionKeep.subtract(diffAB).toArray()).toEqual(treeB.toArray());
+                expect(unionKeep.subtract(diffAB).toArray()).toEqual(treeBInitial);
 
                 // 3. Symmetric difference two ways.
                 const symFromDiffs = diffAB.union(diffBA, keepEither);
@@ -124,8 +124,8 @@ describe('Set operation fuzz tests', () => {
                 expect(diffAB.toArray()).toEqual(treeA.subtract(intersection).toArray());
 
                 // 6. Idempotence.
-                expect(treeA.union(treeA, keepEither).toArray()).toEqual(treeA.toArray());
-                expect(treeA.intersect(treeA, keepEither).toArray()).toEqual(treeA.toArray());
+                expect(treeA.union(treeA, keepEither).toArray()).toEqual(treeAInitial);
+                expect(treeA.intersect(treeA, keepEither).toArray()).toEqual(treeAInitial);
                 expect(diffAB.subtract(treeB).toArray()).toEqual(diffAB.toArray());
 
                 // 7. Commutativity.
@@ -143,8 +143,8 @@ describe('Set operation fuzz tests', () => {
                 expect(assocSumLeft.toArray()).toEqual(assocSumRight.toArray());
 
                 // 9. Absorption.
-                expect(treeA.intersect(treeA.union(treeB, keepEither), keepEither).toArray()).toEqual(treeA.toArray());
-                expect(treeA.union(treeA.intersect(treeB, keepEither), keepEither).toArray()).toEqual(treeA.toArray());
+                expect(treeA.intersect(treeA.union(treeB, keepEither), keepEither).toArray()).toEqual(treeAInitial);
+                expect(treeA.union(treeA.intersect(treeB, keepEither), keepEither).toArray()).toEqual(treeAInitial);
 
                 // 10. Distributivity.
                 const distIntersect = treeA.intersect(treeB.union(treeC, keepEither), keepEither);
