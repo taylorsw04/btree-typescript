@@ -7,7 +7,7 @@ import { makeArray } from './shared';
 
 type NotInCall = { key: number, value: number };
 
-const runSubtractionImplementations = (
+const runForEachKeyNotInAndSubtract = (
   include: BTreeEx<number, number>,
   exclude: BTreeEx<number, number>,
   assertion: (calls: NotInCall[]) => void
@@ -25,12 +25,12 @@ const runSubtractionImplementations = (
   assertion(subtractCalls);
 };
 
-const expectSubtractionCalls = (
+const expectForEachKeyNotInAndSubtractCalls = (
   include: BTreeEx<number, number>,
   exclude: BTreeEx<number, number>,
   expected: NotInCall[]
 ) => {
-  runSubtractionImplementations(include, exclude, (calls) => {
+  runForEachKeyNotInAndSubtract(include, exclude, (calls) => {
     expect(calls).toEqual(expected);
   });
 };
@@ -40,9 +40,9 @@ const tuplesToRecords = (entries: Array<[number, number]>): NotInCall[] =>
 
 const tuples = (...pairs: Array<[number, number]>) => pairs;
 
-describe('BTree forEachKeyNotIn tests with fanout 32', testForEachKeyNotIn.bind(null, 32));
-describe('BTree forEachKeyNotIn tests with fanout 10', testForEachKeyNotIn.bind(null, 10));
-describe('BTree forEachKeyNotIn tests with fanout 4',  testForEachKeyNotIn.bind(null, 4));
+describe('BTree forEachKeyNotIn/subtract tests with fanout 32', testForEachKeyNotIn.bind(null, 32));
+describe('BTree forEachKeyNotIn/subtract tests with fanout 10', testForEachKeyNotIn.bind(null, 10));
+describe('BTree forEachKeyNotIn/subtract tests with fanout 4',  testForEachKeyNotIn.bind(null, 4));
 
 function testForEachKeyNotIn(maxNodeSize: number) {
   const compare = (a: number, b: number) => a - b;
@@ -50,62 +50,62 @@ function testForEachKeyNotIn(maxNodeSize: number) {
   const buildTree = (entries: Array<[number, number]>) =>
     new BTreeEx<number, number>(entries, compare, maxNodeSize);
 
-  it('forEachKeyNotIn two empty trees', () => {
+  it('forEachKeyNotIn/subtract two empty trees', () => {
     const includeTree = buildTree([]);
     const excludeTree = buildTree([]);
-    expectSubtractionCalls(includeTree, excludeTree, []);
+    expectForEachKeyNotInAndSubtractCalls(includeTree, excludeTree, []);
   });
 
-  it('forEachKeyNotIn include empty tree with non-empty tree', () => {
+  it('forEachKeyNotIn/subtract include empty tree with non-empty tree', () => {
     const includeTree = buildTree([]);
     const excludeTree = buildTree(tuples([1, 10], [2, 20], [3, 30]));
-    expectSubtractionCalls(includeTree, excludeTree, []);
+    expectForEachKeyNotInAndSubtractCalls(includeTree, excludeTree, []);
   });
 
-  it('forEachKeyNotIn exclude tree empty yields all include keys', () => {
+  it('forEachKeyNotIn/subtract exclude tree empty yields all include keys', () => {
     const includeEntries: Array<[number, number]> = [[1, 10], [3, 30], [5, 50]];
     const includeTree = buildTree(includeEntries);
     const excludeTree = buildTree([]);
     const expected = tuplesToRecords(includeEntries);
-    expectSubtractionCalls(includeTree, excludeTree, expected);
+    expectForEachKeyNotInAndSubtractCalls(includeTree, excludeTree, expected);
   });
 
-  it('forEachKeyNotIn with no overlapping keys returns include tree contents', () => {
+  it('forEachKeyNotIn/subtract with no overlapping keys returns include tree contents', () => {
     const includeEntries: Array<[number, number]> = [[1, 10], [3, 30], [5, 50]];
     const excludeEntries: Array<[number, number]> = [[0, 100], [2, 200], [4, 400]];
     const includeTree = buildTree(includeEntries);
     const excludeTree = buildTree(excludeEntries);
     const expected = tuplesToRecords(includeEntries);
-    expectSubtractionCalls(includeTree, excludeTree, expected);
+    expectForEachKeyNotInAndSubtractCalls(includeTree, excludeTree, expected);
   });
 
-  it('forEachKeyNotIn with overlapping keys excludes matches', () => {
+  it('forEachKeyNotIn/subtract with overlapping keys excludes matches', () => {
     const includeTree = buildTree(tuples([1, 10], [2, 20], [3, 30], [4, 40], [5, 50]));
     const excludeTree = buildTree(tuples([0, 100], [2, 200], [4, 400], [6, 600]));
-    expectSubtractionCalls(includeTree, excludeTree, [
+    expectForEachKeyNotInAndSubtractCalls(includeTree, excludeTree, [
       { key: 1, value: 10 },
       { key: 3, value: 30 },
       { key: 5, value: 50 },
     ]);
   });
 
-  it('forEachKeyNotIn excludes leading overlap then emits remaining keys', () => {
+  it('forEachKeyNotIn/subtract excludes leading overlap then emits remaining keys', () => {
     const includeTree = buildTree(tuples([1, 10], [2, 20], [3, 30], [4, 40]));
     const excludeTree = buildTree(tuples([1, 100], [2, 200]));
-    expectSubtractionCalls(includeTree, excludeTree, [
+    expectForEachKeyNotInAndSubtractCalls(includeTree, excludeTree, [
       { key: 3, value: 30 },
       { key: 4, value: 40 },
     ]);
   });
 
-  it('forEachKeyNotIn maintains tree contents', () => {
+  it('forEachKeyNotIn/subtract maintains tree contents', () => {
     const includeEntries: Array<[number, number]> = [[1, 10], [2, 20], [3, 30], [4, 40], [5, 50]];
     const excludeEntries: Array<[number, number]> = [[1, 100], [3, 300], [5, 500]];
     const includeTree = buildTree(includeEntries);
     const excludeTree = buildTree(excludeEntries);
     const includeBefore = includeTree.toArray();
     const excludeBefore = excludeTree.toArray();
-    expectSubtractionCalls(includeTree, excludeTree, [
+    expectForEachKeyNotInAndSubtractCalls(includeTree, excludeTree, [
       { key: 2, value: 20 },
       { key: 4, value: 40 },
     ]);
@@ -115,16 +115,16 @@ function testForEachKeyNotIn(maxNodeSize: number) {
     excludeTree.checkValid();
   });
 
-  it('forEachKeyNotIn with contiguous overlap yields sorted survivors', () => {
+  it('forEachKeyNotIn/subtract with contiguous overlap yields sorted survivors', () => {
     const includeTree = buildTree(tuples([1, 1], [2, 2], [3, 3], [4, 4], [5, 5], [6, 6]));
     const excludeTree = buildTree(tuples([3, 30], [4, 40], [5, 50]));
-    runSubtractionImplementations(includeTree, excludeTree, (calls) => {
+    runForEachKeyNotInAndSubtract(includeTree, excludeTree, (calls) => {
       expect(calls.map(c => c.key)).toEqual([1, 2, 6]);
       expect(calls.map(c => c.value)).toEqual([1, 2, 6]);
     });
   });
 
-  it('forEachKeyNotIn large subtraction leaves prefix and suffix ranges', () => {
+  it('forEachKeyNotIn/subtract large subtraction leaves prefix and suffix ranges', () => {
     const size = 1000;
     const excludeStart = 200;
     const excludeSpan = 500;
@@ -135,7 +135,7 @@ function testForEachKeyNotIn(maxNodeSize: number) {
     });
     const includeTree = buildTree(includeEntries);
     const excludeTree = buildTree(excludeEntries);
-    runSubtractionImplementations(includeTree, excludeTree, (calls) => {
+    runForEachKeyNotInAndSubtract(includeTree, excludeTree, (calls) => {
       expect(calls.length).toBe(size - excludeSpan);
       expect(calls[0]).toEqual({ key: 0, value: 0 });
       const lastCall = calls[calls.length - 1];
@@ -145,25 +145,25 @@ function testForEachKeyNotIn(maxNodeSize: number) {
     });
   });
 
-  it('forEachKeyNotIn tree with itself visits no keys', () => {
+  it('forEachKeyNotIn/subtract tree with itself visits no keys', () => {
     const entries = Array.from({ length: 20 }, (_, i) => [i, i * 2] as [number, number]);
     const tree = buildTree(entries);
-    expectSubtractionCalls(tree, tree, []);
+    expectForEachKeyNotInAndSubtractCalls(tree, tree, []);
   });
 
-  it('forEachKeyNotIn exclude superset yields empty result', () => {
+  it('forEachKeyNotIn/subtract exclude superset yields empty result', () => {
     const includeTree = buildTree(tuples([2, 200], [3, 300]));
     const excludeTree = buildTree(tuples([1, 100], [2, 200], [3, 300], [4, 400]));
-    expectSubtractionCalls(includeTree, excludeTree, []);
+    expectForEachKeyNotInAndSubtractCalls(includeTree, excludeTree, []);
   });
 
-  it('forEachKeyNotIn arguments determine surviving keys', () => {
+  it('forEachKeyNotIn/subtract arguments determine surviving keys', () => {
     const tree1 = buildTree(tuples([1, 100], [2, 200], [4, 400]));
     const tree2 = buildTree(tuples([2, 20], [3, 30], [4, 40]));
-    expectSubtractionCalls(tree1, tree2, [
+    expectForEachKeyNotInAndSubtractCalls(tree1, tree2, [
       { key: 1, value: 100 },
     ]);
-    expectSubtractionCalls(tree2, tree1, [
+    expectForEachKeyNotInAndSubtractCalls(tree2, tree1, [
       { key: 3, value: 30 },
     ]);
   });
@@ -233,7 +233,7 @@ describe('BTree forEachKeyNotIn and subtract input/output validation', () => {
   });
 });
 
-describe('BTree forEachKeyNotIn fuzz tests', () => {
+describe('BTree forEachKeyNotIn/subtract fuzz tests', () => {
   const compare = (a: number, b: number) => a - b;
   const FUZZ_SETTINGS = {
     branchingFactors: [4, 5, 32],
@@ -297,8 +297,8 @@ describe('BTree forEachKeyNotIn fuzz tests', () => {
               const expectedA = aArray.filter(([key]) => !bMap.has(key));
               const expectedB = bArray.filter(([key]) => !aMap.has(key));
 
-              expectSubtractionCalls(treeA, treeB, tuplesToRecords(expectedA));
-              expectSubtractionCalls(treeB, treeA, tuplesToRecords(expectedB));
+              expectForEachKeyNotInAndSubtractCalls(treeA, treeB, tuplesToRecords(expectedA));
+              expectForEachKeyNotInAndSubtractCalls(treeB, treeA, tuplesToRecords(expectedB));
 
               expect(treeA.toArray()).toEqual(aArray);
               expect(treeB.toArray()).toEqual(bArray);
