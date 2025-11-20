@@ -91,8 +91,9 @@ function testUnion(maxNodeSize: number) {
     return { result, expected };
   };
 
-  test('Union disjoint roots reuses appended subtree', () => {
-    const size = maxNodeSize * 3;
+  test('Union disjoint roots reuses roots', () => {
+    // ensure the roots are not underfilled, as union will try to merge underfilled roots
+    const size = maxNodeSize * maxNodeSize;
     const tree1 = buildTree(range(0, size), 1, 0);
     const offset = size * 5;
     const tree2 = buildTree(range(offset, offset + size), 2, 0);
@@ -264,6 +265,55 @@ function testUnion(maxNodeSize: number) {
     const { result } = expectUnionMatchesBaseline(treeOdd, treeEven, unionFn);
     expect(unionCalls).toBe(0);
     expect(result.size).toBe(treeOdd.size + treeEven.size);
+  });
+
+  test('Union merges disjoint leaf roots into a single leaf', () => {
+    const perTree = Math.max(1, Math.floor(maxNodeSize / 2) - 1);
+    const keysA = range(1, perTree).map(i => i);
+    const keysB = keysA.map(k => k * 1000);
+    const tree1 = buildTree(keysA);
+    const tree2 = buildTree(keysB);
+
+    expectRootLeafState(tree1, true);
+    expectRootLeafState(tree2, true);
+
+    const unioned = tree1.union(tree2, () => {
+      throw new Error('Should not be called for disjoint keys');
+    });
+    const resultRoot = unioned['_root'] as any;
+    const expectedKeys = keysA.concat(keysB).sort(compare);
+    expect(resultRoot.isLeaf).toBe(true);
+    expect(resultRoot.keys).toEqual(expectedKeys);
+  });
+
+  test('Union combines underfilled non-leaf roots into a filled root', () => {
+    const minChildren = Math.floor(maxNodeSize / 2);
+    const targetLeavesPerTree = minChildren - 1;
+    if (targetLeavesPerTree === 1) {
+      return; // cannot test this case with only one leaf per tree
+    }
+    const entriesPerLeaf = maxNodeSize;
+    const buildUnderfilledTree = (startKey: number) => {
+      const keys: number[] = [];
+      for (let leaf = 0; leaf < targetLeavesPerTree; leaf++) {
+        for (let i = 0; i < entriesPerLeaf; i++)
+          keys.push(startKey + leaf * entriesPerLeaf + i);
+      }
+      const tree = buildTree(keys);
+      const root = tree['_root'] as any;
+      expect(root.isLeaf).toBe(false);
+      expect(root.children.length).toBeLessThan(minChildren);
+      return { tree, nextKey: startKey + keys.length, childCount: root.children.length };
+    };
+
+    const first = buildUnderfilledTree(0);
+    const second = buildUnderfilledTree(first.nextKey + maxNodeSize * 10);
+
+    const unioned = first.tree.union(second.tree, () => { throw new Error('Should not be called for disjoint keys'); });
+    const resultRoot = unioned['_root'] as any;
+    expect(resultRoot.isLeaf).toBe(false);
+    expect(resultRoot.children.length).toBeGreaterThanOrEqual(minChildren);
+    expect(resultRoot.children.length).toBe(first.childCount + second.childCount);
   });
 
   test('Union with single boundary overlap prefers right value', () => {
@@ -617,28 +667,6 @@ function testUnion(maxNodeSize: number) {
 
     const { result } = expectUnionMatchesBaseline(tree1, tree2, unionFn);
     expect(result.toArray()).toEqual([[1, 10], [4, 400]]);
-  });
-
-  test('Union reuses appended subtree with minimum fanout', () => {
-    const tree1 = new BTreeEx<number, number>([], compare, maxNodeSize);
-    const tree2 = new BTreeEx<number, number>([], compare, maxNodeSize);
-
-    for (let i = 0; i < 400; i++) {
-      tree1.set(i, i);
-    }
-    for (let i = 400; i < 800; i++) {
-      tree2.set(i, i * 2);
-    }
-
-    const unionFn: UnionFn = () => {
-      throw new Error('Should not be called for disjoint ranges');
-    };
-
-    expectUnionMatchesBaseline(tree1, tree2, unionFn, ({ result }) => {
-      const resultRoot = result['_root'] as any;
-      const tree2Root = tree2['_root'] as any;
-      expect(sharesNode(resultRoot, tree2Root)).toBe(true);
-    });
   });
 
   test('Union with large disjoint ranges', () => {

@@ -43,11 +43,17 @@ function decompose(left, right, combineFn, ignoreRight) {
         (0, shared_1.alternatingPush)(disjoint, height, leaf);
     };
     var addSharedNodeToDisjointSet = function (node, height) {
-        (0, shared_1.makeLeavesFrom)(pending, maxNodeSize, onLeafCreation, decomposeLoadFactor);
         // flush pending entries
+        (0, shared_1.makeLeavesFrom)(pending, maxNodeSize, onLeafCreation, decomposeLoadFactor);
         pending.length = 0;
-        node.isShared = true;
-        (0, shared_1.alternatingPush)(disjoint, height, node);
+        // Don't share underfilled leaves, instead mark them as needing merging
+        if (node.isLeaf && node.keys.length < minSize) {
+            (0, shared_1.alternatingPush)(disjoint, -1, node.clone());
+        }
+        else {
+            node.isShared = true;
+            (0, shared_1.alternatingPush)(disjoint, height, node);
+        }
         if (height > tallestHeight) {
             tallestIndex = (0, shared_1.alternatingCount)(disjoint) - 1;
             tallestHeight = height;
@@ -109,10 +115,23 @@ function decompose(left, right, combineFn, ignoreRight) {
         if (stepDownIndex !== stepDownIndex /* NaN: still walking up */
             || stepDownIndex === Number.POSITIVE_INFINITY /* target key is beyond edge of tree, done with walk */) {
             if (!payload.disqualified) {
-                highestDisjoint = { node: parent, height: height };
                 if (stepDownIndex === Number.POSITIVE_INFINITY) {
                     // We have finished our walk, and we won't be stepping down, so add the root
-                    addHighestDisjoint();
+                    // Roots are allowed to be underfilled, so break the root up here if so to avoid
+                    // creating underfilled interior nodes during reconstruction.
+                    // Note: the main btree implementation allows underfilled nodes in general, this algorithm
+                    // guarantees that no additional underfilled nodes are created beyond what was already present.
+                    if (parent.keys.length < minSize) {
+                        for (var i = fromIndex; i < children.length; ++i)
+                            addSharedNodeToDisjointSet(children[i], nextHeight);
+                    }
+                    else {
+                        addSharedNodeToDisjointSet(parent, height);
+                    }
+                    highestDisjoint = undefined;
+                }
+                else {
+                    highestDisjoint = { node: parent, height: height };
                 }
             }
             else {
@@ -270,11 +289,10 @@ function decompose(left, right, combineFn, ignoreRight) {
         }
     }
     // Ensure any trailing non-disjoint entries are added
-    var createdLeaves = (0, shared_1.makeLeavesFrom)(pending, maxNodeSize, onLeafCreation, decomposeLoadFactor);
-    // In fully interleaved cases, no leaves may be created until now
-    if (tallestHeight < 0 && createdLeaves > 0) {
-        tallestIndex = (0, shared_1.alternatingCount)(disjoint) - 1;
-        tallestHeight = 0;
+    (0, shared_1.makeLeavesFrom)(pending, maxNodeSize, onLeafCreation, decomposeLoadFactor);
+    // In cases like full interleaving, no leaves may be created until now
+    if (tallestHeight < 0 && (0, shared_1.alternatingCount)(disjoint) > 0) {
+        tallestIndex = 0;
     }
     return { disjoint: disjoint, tallestIndex: tallestIndex };
 }

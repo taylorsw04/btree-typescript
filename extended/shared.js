@@ -11,7 +11,6 @@ var b_tree_1 = require("../b+tree");
  * @param maxNodeSize The maximum node size (branching factor) for the resulting leaves.
  * @param onLeafCreation Called when a new leaf is created.
  * @param loadFactor Desired load factor for created leaves. Must be between 0.5 and 1.0.
- * @returns The number of leaves created.
  * @internal
  */
 function makeLeavesFrom(alternatingList, maxNodeSize, onLeafCreation, loadFactor) {
@@ -19,11 +18,9 @@ function makeLeavesFrom(alternatingList, maxNodeSize, onLeafCreation, loadFactor
     if (totalPairs === 0)
         return 0;
     var targetSize = Math.ceil(maxNodeSize * loadFactor);
-    // Ensure we don't make any underfilled nodes unless we have to.
-    var targetLeafCount = totalPairs <= maxNodeSize ? 1 : Math.ceil(totalPairs / targetSize);
     // This method creates as many evenly filled leaves as possible from
     // the pending entries. All will be > 50% full if we are creating more than one leaf.
-    var remainingLeaves = targetLeafCount;
+    var remainingLeaves = totalPairs <= maxNodeSize ? 1 : Math.ceil(totalPairs / targetSize);
     var remaining = totalPairs;
     var pairIndex = 0;
     while (remainingLeaves > 0) {
@@ -40,7 +37,6 @@ function makeLeavesFrom(alternatingList, maxNodeSize, onLeafCreation, loadFactor
         var leaf = new b_tree_1.BNode(keys, vals);
         onLeafCreation(leaf);
     }
-    return targetLeafCount;
 }
 exports.makeLeavesFrom = makeLeavesFrom;
 ;
