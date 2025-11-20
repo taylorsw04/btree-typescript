@@ -3,7 +3,15 @@ import forEachKeyNotIn from '../extended/forEachKeyNotIn';
 import subtract from '../extended/subtract';
 import { comparatorErrorMsg, branchingFactorErrorMsg } from '../extended/shared';
 import MersenneTwister from 'mersenne-twister';
-import { makeArray } from './shared';
+import {
+  applyRemovalRunsToTree,
+  buildEntriesFromMap,
+  expectTreeMatchesEntries,
+  forEachFuzzCase,
+  makeArray,
+  SetOperationFuzzSettings,
+  TreeEntries
+} from './shared';
 
 type NotInCall = { key: number, value: number };
 
@@ -42,7 +50,7 @@ const tuples = (...pairs: Array<[number, number]>) => pairs;
 
 describe('BTree forEachKeyNotIn/subtract tests with fanout 32', testForEachKeyNotIn.bind(null, 32));
 describe('BTree forEachKeyNotIn/subtract tests with fanout 10', testForEachKeyNotIn.bind(null, 10));
-describe('BTree forEachKeyNotIn/subtract tests with fanout 4',  testForEachKeyNotIn.bind(null, 4));
+describe('BTree forEachKeyNotIn/subtract tests with fanout 4', testForEachKeyNotIn.bind(null, 4));
 
 function testForEachKeyNotIn(maxNodeSize: number) {
   const compare = (a: number, b: number) => a - b;
@@ -217,7 +225,7 @@ describe('BTree forEachKeyNotIn and subtract input/output validation', () => {
   it('forEachKeyNotIn throws error when comparators differ', () => {
     const includeTree = new BTreeEx<number, number>([[1, 10]], (a, b) => b - a);
     const excludeTree = new BTreeEx<number, number>([[2, 20]], (a, b) => a + b);
-    expect(() => forEachKeyNotIn(includeTree, excludeTree, () => {})).toThrow(comparatorErrorMsg);
+    expect(() => forEachKeyNotIn(includeTree, excludeTree, () => { })).toThrow(comparatorErrorMsg);
   });
 
   it('subtract throws error when comparators differ', () => {
@@ -235,79 +243,66 @@ describe('BTree forEachKeyNotIn and subtract input/output validation', () => {
 
 describe('BTree forEachKeyNotIn/subtract fuzz tests', () => {
   const compare = (a: number, b: number) => a - b;
-  const FUZZ_SETTINGS = {
+  const FUZZ_SETTINGS: SetOperationFuzzSettings = {
     branchingFactors: [4, 5, 32],
     ooms: [2, 3],
     fractionsPerOOM: [0.1, 0.25, 0.5],
-    collisionChances: [0.05, 0.1, 0.3],
-    timeoutMs: 30_000
-  } as const;
+    removalChances: [0, 0.01, 0.1]
+  };
 
-  FUZZ_SETTINGS.fractionsPerOOM.forEach(fraction => {
-    if (fraction < 0 || fraction > 1)
-      throw new Error('FUZZ_SETTINGS.fractionsPerOOM must contain values between 0 and 1');
-  });
-  FUZZ_SETTINGS.collisionChances.forEach(chance => {
-    if (chance < 0 || chance > 1)
-      throw new Error('FUZZ_SETTINGS.collisionChances must contain values between 0 and 1');
-  });
-
-  jest.setTimeout(FUZZ_SETTINGS.timeoutMs);
+  const FUZZ_TIMEOUT_MS = 30_000;
+  jest.setTimeout(FUZZ_TIMEOUT_MS);
 
   const rng = new MersenneTwister(0xBAD_C0DE);
 
-  for (const maxNodeSize of FUZZ_SETTINGS.branchingFactors) {
-    describe(`branching factor ${maxNodeSize}`, () => {
-      for (const collisionChance of FUZZ_SETTINGS.collisionChances) {
-        for (const oom of FUZZ_SETTINGS.ooms) {
-          const size = 5 * Math.pow(10, oom);
-          for (const fractionA of FUZZ_SETTINGS.fractionsPerOOM) {
-            const fractionB = 1 - fractionA;
-            const collisionLabel = collisionChance.toFixed(2);
+  forEachFuzzCase(FUZZ_SETTINGS, ({ maxNodeSize, size, fractionA, fractionB, removalChance, removalLabel }) => {
+    it(`branch ${maxNodeSize}, size ${size}, fractionA ${fractionA.toFixed(2)}, fractionB ${fractionB.toFixed(2)}, removal ${removalLabel}`, () => {
+      const treeA = new BTreeEx<number, number>([], compare, maxNodeSize);
+      const treeB = new BTreeEx<number, number>([], compare, maxNodeSize);
+      const entriesMapA = new Map<number, number>();
+      const entriesMapB = new Map<number, number>();
 
-            it(`size ${size}, fractionA ${fractionA.toFixed(2)}, fractionB ${fractionB.toFixed(2)}, collision ${collisionLabel}`, () => {
-              const treeA = new BTreeEx<number, number>([], compare, maxNodeSize);
-              const treeB = new BTreeEx<number, number>([], compare, maxNodeSize);
+      const keys = makeArray(size, true, 1, rng);
 
-              const keys = makeArray(size, true, 1, collisionChance, rng);
+      for (const value of keys) {
+        let assignToA = rng.random() < fractionA;
+        let assignToB = rng.random() < fractionB;
 
-              for (const value of keys) {
-                const assignToA = rng.random() < fractionA;
-                const assignToB = rng.random() < fractionB;
+        if (!assignToA && !assignToB) {
+          if (rng.random() < 0.5)
+            assignToA = true;
+          else
+            assignToB = true;
+        }
 
-                if (!assignToA && !assignToB) {
-                  if (rng.random() < 0.5)
-                    treeA.set(value, value);
-                  else
-                    treeB.set(value, value);
-                  continue;
-                }
-
-                if (assignToA)
-                  treeA.set(value, value);
-                if (assignToB)
-                  treeB.set(value, value);
-              }
-
-              const aArray = treeA.toArray();
-              const bArray = treeB.toArray();
-              const bMap = new Map<number, number>(bArray);
-              const aMap = new Map<number, number>(aArray);
-
-              const expectedA = aArray.filter(([key]) => !bMap.has(key));
-              const expectedB = bArray.filter(([key]) => !aMap.has(key));
-
-              expectForEachKeyNotInAndSubtractCalls(treeA, treeB, tuplesToRecords(expectedA));
-              expectForEachKeyNotInAndSubtractCalls(treeB, treeA, tuplesToRecords(expectedB));
-
-              expect(treeA.toArray()).toEqual(aArray);
-              expect(treeB.toArray()).toEqual(bArray);
-              treeA.checkValid();
-              treeB.checkValid();
-            });
-          }
+        if (assignToA) {
+          treeA.set(value, value);
+          entriesMapA.set(value, value);
+        }
+        if (assignToB) {
+          treeB.set(value, value);
+          entriesMapB.set(value, value);
         }
       }
+
+      let treeAEntries: TreeEntries = buildEntriesFromMap(entriesMapA, compare);
+      let treeBEntries: TreeEntries = buildEntriesFromMap(entriesMapB, compare);
+      treeAEntries = applyRemovalRunsToTree(treeA, treeAEntries, removalChance, maxNodeSize, rng);
+      treeBEntries = applyRemovalRunsToTree(treeB, treeBEntries, removalChance, maxNodeSize, rng);
+
+      const bMap = new Map<number, number>(treeBEntries);
+      const aMap = new Map<number, number>(treeAEntries);
+
+      const expectedA = treeAEntries.filter(([key]) => !bMap.has(key));
+      const expectedB = treeBEntries.filter(([key]) => !aMap.has(key));
+
+      expectForEachKeyNotInAndSubtractCalls(treeA, treeB, tuplesToRecords(expectedA));
+      expectForEachKeyNotInAndSubtractCalls(treeB, treeA, tuplesToRecords(expectedB));
+
+      expectTreeMatchesEntries(treeA, treeAEntries);
+      expectTreeMatchesEntries(treeB, treeBEntries);
+      treeA.checkValid();
+      treeB.checkValid();
     });
-  }
+  });
 });

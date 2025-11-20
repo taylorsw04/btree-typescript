@@ -12,6 +12,25 @@ export type TreeNodeStats = {
   averageLoadFactor: number;
 };
 
+export type TreeEntries = Array<[number, number]>;
+
+export type SetOperationFuzzSettings = {
+  branchingFactors: number[];
+  ooms: number[];
+  fractionsPerOOM: number[];
+  removalChances: number[];
+};
+
+export type FuzzCase = {
+  maxNodeSize: number;
+  oom: number;
+  size: number;
+  fractionA: number;
+  fractionB: number;
+  removalChance: number;
+  removalLabel: string;
+};
+
 export function countTreeNodeStats<K, V>(tree: BTree<K, V>): TreeNodeStats {
   const root = (tree as unknown as BTreeWithInternals<K, V>)._root;
   if (tree.size === 0 || !root)
@@ -85,7 +104,6 @@ export function makeArray(
   size: number,
   randomOrder: boolean,
   spacing = 10,
-  collisionChance = 0,
   rng?: MersenneTwister
 ): number[] {
   const randomizer = rng ?? rand;
@@ -108,12 +126,8 @@ export function makeArray(
   const keys: number[] = [];
   let current = 0;
   for (let i = 0; i < size; i++) {
-    if (i > 0 && collisionChance > 0 && randomFloat() < collisionChance) {
-      keys[i] = keys[i - 1];
-    } else {
-      current += 1 + randomIntWithMax(spacing);
-      keys[i] = current;
-    }
+    current += 1 + randomIntWithMax(spacing);
+    keys[i] = current;
   }
   if (randomOrder) {
     for (let i = 0; i < size; i++)
@@ -129,4 +143,83 @@ function swap(keys: any[], i: number, j: number) {
   const tmp = keys[i];
   keys[i] = keys[j];
   keys[j] = tmp;
+}
+
+export function buildEntriesFromMap(
+  entriesMap: Map<number, number>,
+  compareFn: (a: number, b: number) => number = (a, b) => a - b
+): TreeEntries {
+  const entries = Array.from(entriesMap.entries()) as TreeEntries;
+  entries.sort((a, b) => compareFn(a[0], b[0]));
+  return entries;
+}
+
+export function applyRemovalRunsToTree(
+  tree: BTree<number, number>,
+  entries: TreeEntries,
+  removalChance: number,
+  branchingFactor: number,
+  rng: MersenneTwister
+): TreeEntries {
+  if (removalChance <= 0 || entries.length === 0)
+    return entries;
+  const remaining: TreeEntries = [];
+  let index = 0;
+  while (index < entries.length) {
+    const [key, value] = entries[index];
+    if (rng.random() < removalChance) {
+      tree.delete(key);
+      index++;
+      while (index < entries.length) {
+        const [candidateKey] = entries[index];
+        if (rng.random() < (1 / branchingFactor))
+          break;
+        tree.delete(candidateKey);
+        index++;
+      }
+    } else {
+      remaining.push([key, value]);
+      index++;
+    }
+  }
+  return remaining;
+}
+
+export function expectTreeMatchesEntries(tree: BTree<number, number>, entries: TreeEntries): void {
+  let index = 0;
+  tree.forEachPair((key, value) => {
+    const expected = entries[index++]!;
+    expect([key, value]).toEqual(expected);
+  });
+  expect(index).toBe(entries.length);
+}
+
+function validateFuzzSettings(settings: SetOperationFuzzSettings): void {
+  settings.fractionsPerOOM.forEach(fraction => {
+    if (fraction < 0 || fraction > 1)
+      throw new Error('fractionsPerOOM values must be between 0 and 1');
+  });
+  settings.removalChances.forEach(chance => {
+    if (chance < 0 || chance > 1)
+      throw new Error('removalChances values must be between 0 and 1');
+  });
+}
+
+export function forEachFuzzCase(
+  settings: SetOperationFuzzSettings,
+  callback: (testCase: FuzzCase) => void
+): void {
+  validateFuzzSettings(settings);
+  for (const maxNodeSize of settings.branchingFactors) {
+    for (const removalChance of settings.removalChances) {
+      const removalLabel = removalChance.toFixed(3);
+      for (const oom of settings.ooms) {
+        const size = 5 * Math.pow(10, oom);
+        for (const fractionA of settings.fractionsPerOOM) {
+          const fractionB = 1 - fractionA;
+          callback({ maxNodeSize, oom, size, fractionA, fractionB, removalChance, removalLabel });
+        }
+      }
+    }
+  }
 }

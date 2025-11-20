@@ -3,7 +3,15 @@ import BTreeEx from '../extended';
 import union from '../extended/union';
 import { branchingFactorErrorMsg, comparatorErrorMsg } from '../extended/shared';
 import MersenneTwister from 'mersenne-twister';
-import { makeArray, randomInt } from './shared';
+import {
+  applyRemovalRunsToTree,
+  buildEntriesFromMap,
+  expectTreeMatchesEntries,
+  forEachFuzzCase,
+  makeArray,
+  randomInt,
+  SetOperationFuzzSettings
+} from './shared';
 
 var test: (name: string, f: () => void) => void = it;
 
@@ -774,83 +782,82 @@ describe('BTree union input/output validation', () => {
 describe('BTree union fuzz tests', () => {
   const compare = (a: number, b: number) => a - b;
   const unionFn = (_k: number, left: number, _right: number) => left;
-  const FUZZ_SETTINGS = {
+  const FUZZ_SETTINGS: SetOperationFuzzSettings = {
     branchingFactors: [4, 5, 32],
     ooms: [0, 1, 2], // [0, 1, 2, 3],
     fractionsPerOOM: [0.1, 0.25, 0.5], // [0.0001, 0.01, 0.1, 0.25, 0.5],
-    collisionChances: [0.1, 0.5], // [0, 0.01, 0.1, 0.5]
-  } as const;
+    removalChances: [0, 0.01, 0.1]
+  };
   const RANDOM_EDITS_PER_TEST = 20;
   const TIMEOUT_MS = 30_000;
-
-  FUZZ_SETTINGS.fractionsPerOOM.forEach(fraction => {
-    if (fraction < 0 || fraction > 1)
-      throw new Error('FUZZ_SETTINGS.fractionsPerOOM must contain values between 0 and 1');
-  });
-  FUZZ_SETTINGS.collisionChances.forEach(chance => {
-    if (chance < 0 || chance > 1)
-      throw new Error('FUZZ_SETTINGS.collisionChances must contain values between 0 and 1');
-  });
 
   jest.setTimeout(TIMEOUT_MS);
 
   const rng = new MersenneTwister(0xBEEFCAFE);
 
-  for (const maxNodeSize of FUZZ_SETTINGS.branchingFactors) {
-    describe(`branching factor ${maxNodeSize}`, () => {
-      for (const collisionChance of FUZZ_SETTINGS.collisionChances) {
-        for (const oom of FUZZ_SETTINGS.ooms) {
-          const size = 5 * Math.pow(10, oom);
-          for (const fractionA of FUZZ_SETTINGS.fractionsPerOOM) {
-            const fractionB = 1 - fractionA;
-            const collisionLabel = collisionChance.toFixed(2);
+  forEachFuzzCase(FUZZ_SETTINGS, ({ maxNodeSize, size, fractionA, fractionB, removalChance, removalLabel }) => {
+    test(`branch ${maxNodeSize}, size ${size}, fractionA ${fractionA.toFixed(2)}, fractionB ${fractionB.toFixed(2)}, removal ${removalLabel}`, () => {
+      const treeA = new BTreeEx<number, number>([], compare, maxNodeSize);
+      const treeB = new BTreeEx<number, number>([], compare, maxNodeSize);
 
-            test(`size ${size}, fractionA ${fractionA.toFixed(2)}, fractionB ${fractionB.toFixed(2)}, collision ${collisionLabel}`, () => {
-              const treeA = new BTreeEx<number, number>([], compare, maxNodeSize);
-              const treeB = new BTreeEx<number, number>([], compare, maxNodeSize);
+      const keys = makeArray(size, true, 1, rng);
+      const entriesMapA = new Map<number, number>();
+      const entriesMapB = new Map<number, number>();
 
-              const keys = makeArray(size, true, 1, collisionChance, rng);
-              const sorted = Array.from(new Set(keys)).sort(compare);
+      for (const value of keys) {
+        let assignToA = rng.random() < fractionA;
+        let assignToB = rng.random() < fractionB;
+        if (!assignToA && !assignToB) {
+          if (rng.random() < 0.5)
+            assignToA = true;
+          else
+            assignToB = true;
+        }
 
-              for (const value of keys) {
-                if (rng.random() < fractionA) {
-                  treeA.set(value, value);
-                } else {
-                  treeB.set(value, value);
-                }
-              }
-
-              const aArray = treeA.toArray();
-              const bArray = treeB.toArray();
-
-              const unioned = treeA.union(treeB, unionFn);
-              unioned.checkValid();
-
-              expect(unioned.toArray()).toEqual(sorted.map(k => [k, k]));
-
-              // Union should not have mutated inputs
-              expect(treeA.toArray()).toEqual(aArray);
-              expect(treeB.toArray()).toEqual(bArray);
-
-              for (let edit = 0; edit < RANDOM_EDITS_PER_TEST; edit++) {
-                const key = 1 + randomInt(rng, size);
-                const action = rng.random();
-                if (action < 0.33) {
-                  unioned.set(key, key);
-                } else if (action < 0.66) {
-                  unioned.set(key, -key);
-                } else {
-                  unioned.delete(key);
-                }
-              }
-
-              // Check for shared mutability issues
-              expect(treeA.toArray()).toEqual(aArray);
-              expect(treeB.toArray()).toEqual(bArray);
-            });
-          }
+        if (assignToA) {
+          treeA.set(value, value);
+          entriesMapA.set(value, value);
+        }
+        if (assignToB) {
+          treeB.set(value, value);
+          entriesMapB.set(value, value);
         }
       }
+
+      let treeAEntries = buildEntriesFromMap(entriesMapA, compare);
+      let treeBEntries = buildEntriesFromMap(entriesMapB, compare);
+
+      treeAEntries = applyRemovalRunsToTree(treeA, treeAEntries, removalChance, maxNodeSize, rng);
+      treeBEntries = applyRemovalRunsToTree(treeB, treeBEntries, removalChance, maxNodeSize, rng);
+
+      const unioned = treeA.union(treeB, unionFn);
+      unioned.checkValid();
+
+      const combinedKeys = new Set<number>();
+      treeAEntries.forEach(([key]) => combinedKeys.add(key));
+      treeBEntries.forEach(([key]) => combinedKeys.add(key));
+      const expected = Array.from(combinedKeys).sort(compare).map(key => [key, key]);
+      expect(unioned.toArray()).toEqual(expected);
+
+      // Union should not have mutated inputs
+      expectTreeMatchesEntries(treeA, treeAEntries);
+      expectTreeMatchesEntries(treeB, treeBEntries);
+
+      for (let edit = 0; edit < RANDOM_EDITS_PER_TEST; edit++) {
+        const key = 1 + randomInt(rng, size);
+        const action = rng.random();
+        if (action < 0.33) {
+          unioned.set(key, key);
+        } else if (action < 0.66) {
+          unioned.set(key, -key);
+        } else {
+          unioned.delete(key);
+        }
+      }
+
+      // Check for shared mutability issues
+      expectTreeMatchesEntries(treeA, treeAEntries);
+      expectTreeMatchesEntries(treeB, treeBEntries);
     });
-  }
+  });
 });

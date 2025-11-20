@@ -3,7 +3,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.randomInt = exports.makeArray = exports.addToBoth = exports.expectTreeEqualTo = exports.randInt = exports.logTreeNodeStats = exports.countTreeNodeStats = void 0;
+exports.forEachFuzzCase = exports.expectTreeMatchesEntries = exports.applyRemovalRunsToTree = exports.buildEntriesFromMap = exports.randomInt = exports.makeArray = exports.addToBoth = exports.expectTreeEqualTo = exports.randInt = exports.logTreeNodeStats = exports.countTreeNodeStats = void 0;
 var mersenne_twister_1 = __importDefault(require("mersenne-twister"));
 var rand = new mersenne_twister_1.default(1234);
 function countTreeNodeStats(tree) {
@@ -66,9 +66,8 @@ function addToBoth(a, b, k, v) {
     expect(a.set(k, v)).toEqual(b.set(k, v));
 }
 exports.addToBoth = addToBoth;
-function makeArray(size, randomOrder, spacing, collisionChance, rng) {
+function makeArray(size, randomOrder, spacing, rng) {
     if (spacing === void 0) { spacing = 10; }
-    if (collisionChance === void 0) { collisionChance = 0; }
     var randomizer = rng !== null && rng !== void 0 ? rng : rand;
     var useGlobalRand = rng === undefined;
     var randomFloat = function () {
@@ -86,13 +85,8 @@ function makeArray(size, randomOrder, spacing, collisionChance, rng) {
     var keys = [];
     var current = 0;
     for (var i = 0; i < size; i++) {
-        if (i > 0 && collisionChance > 0 && randomFloat() < collisionChance) {
-            keys[i] = keys[i - 1];
-        }
-        else {
-            current += 1 + randomIntWithMax(spacing);
-            keys[i] = current;
-        }
+        current += 1 + randomIntWithMax(spacing);
+        keys[i] = current;
     }
     if (randomOrder) {
         for (var i = 0; i < size; i++)
@@ -110,3 +104,75 @@ function swap(keys, i, j) {
     keys[i] = keys[j];
     keys[j] = tmp;
 }
+function buildEntriesFromMap(entriesMap, compareFn) {
+    if (compareFn === void 0) { compareFn = function (a, b) { return a - b; }; }
+    var entries = Array.from(entriesMap.entries());
+    entries.sort(function (a, b) { return compareFn(a[0], b[0]); });
+    return entries;
+}
+exports.buildEntriesFromMap = buildEntriesFromMap;
+function applyRemovalRunsToTree(tree, entries, removalChance, branchingFactor, rng) {
+    if (removalChance <= 0 || entries.length === 0)
+        return entries;
+    var remaining = [];
+    var index = 0;
+    while (index < entries.length) {
+        var _a = entries[index], key = _a[0], value = _a[1];
+        if (rng.random() < removalChance) {
+            tree.delete(key);
+            index++;
+            while (index < entries.length) {
+                var candidateKey = entries[index][0];
+                if (rng.random() < (1 / branchingFactor))
+                    break;
+                tree.delete(candidateKey);
+                index++;
+            }
+        }
+        else {
+            remaining.push([key, value]);
+            index++;
+        }
+    }
+    return remaining;
+}
+exports.applyRemovalRunsToTree = applyRemovalRunsToTree;
+function expectTreeMatchesEntries(tree, entries) {
+    var index = 0;
+    tree.forEachPair(function (key, value) {
+        var expected = entries[index++];
+        expect([key, value]).toEqual(expected);
+    });
+    expect(index).toBe(entries.length);
+}
+exports.expectTreeMatchesEntries = expectTreeMatchesEntries;
+function validateFuzzSettings(settings) {
+    settings.fractionsPerOOM.forEach(function (fraction) {
+        if (fraction < 0 || fraction > 1)
+            throw new Error('fractionsPerOOM values must be between 0 and 1');
+    });
+    settings.removalChances.forEach(function (chance) {
+        if (chance < 0 || chance > 1)
+            throw new Error('removalChances values must be between 0 and 1');
+    });
+}
+function forEachFuzzCase(settings, callback) {
+    validateFuzzSettings(settings);
+    for (var _i = 0, _a = settings.branchingFactors; _i < _a.length; _i++) {
+        var maxNodeSize = _a[_i];
+        for (var _b = 0, _c = settings.removalChances; _b < _c.length; _b++) {
+            var removalChance = _c[_b];
+            var removalLabel = removalChance.toFixed(3);
+            for (var _d = 0, _e = settings.ooms; _d < _e.length; _d++) {
+                var oom = _e[_d];
+                var size = 5 * Math.pow(10, oom);
+                for (var _f = 0, _g = settings.fractionsPerOOM; _f < _g.length; _f++) {
+                    var fractionA = _g[_f];
+                    var fractionB = 1 - fractionA;
+                    callback({ maxNodeSize: maxNodeSize, oom: oom, size: size, fractionA: fractionA, fractionB: fractionB, removalChance: removalChance, removalLabel: removalLabel });
+                }
+            }
+        }
+    }
+}
+exports.forEachFuzzCase = forEachFuzzCase;

@@ -198,7 +198,7 @@ describe('bulkLoad fuzz tests', () => {
             const size = baseSize + sizeJitter;
 
             test(`size ${size}, iteration ${iteration}`, () => {
-              const keys = makeArray(size, false, 0, 0, rng);
+              const keys = makeArray(size, false, 0, rng);
               const pairs = pairsFromKeys(keys).map(([key, value], index) => [key, value + index] as Pair);
               const { tree, root } = buildTreeFromPairs(maxNodeSize, pairs, loadFactor);
               expectTreeMatches(tree, pairs);
