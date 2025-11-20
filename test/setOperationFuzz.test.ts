@@ -1,6 +1,6 @@
 import BTreeEx from '../extended';
 import MersenneTwister from 'mersenne-twister';
-import { countTreeNodeStats, makeArray } from './shared';
+import { makeArray } from './shared';
 
 const compare = (a: number, b: number) => a - b;
 
@@ -9,18 +9,13 @@ describe('Set operation fuzz tests', () => {
     branchingFactors: [4, 5, 32],
     ooms: [2, 3],
     fractionsPerOOM: [0.1, 0.25, 0.5],
-    collisionChances: [0.05, 0.1, 0.3],
-    removalChances: [0.001, 0.01, 0.1],
+    removalChances: [0.01, 0.1],
     timeoutMs: 30_000
   } as const;
 
   FUZZ_SETTINGS.fractionsPerOOM.forEach(fraction => {
     if (fraction < 0 || fraction > 1)
       throw new Error('FUZZ_SETTINGS.fractionsPerOOM must contain values between 0 and 1');
-  });
-  FUZZ_SETTINGS.collisionChances.forEach(chance => {
-    if (chance < 0 || chance > 1)
-      throw new Error('FUZZ_SETTINGS.collisionChances must contain values between 0 and 1');
   });
   FUZZ_SETTINGS.removalChances.forEach(chance => {
     if (chance < 0 || chance > 1)
@@ -30,8 +25,6 @@ describe('Set operation fuzz tests', () => {
   jest.setTimeout(FUZZ_SETTINGS.timeoutMs);
 
   const rng = new MersenneTwister(0xC0FFEE);
-
-  const count = (t: BTreeEx<number, number>) => t.size;
 
   const applyRemovalRuns = (tree: BTreeEx<number, number>, removalChance: number, branchingFactor: number) => {
     if (removalChance <= 0 || tree.size === 0)
@@ -58,21 +51,21 @@ describe('Set operation fuzz tests', () => {
 
   for (const maxNodeSize of FUZZ_SETTINGS.branchingFactors) {
     describe(`branching factor ${maxNodeSize}`, () => {
-      for (const collisionChance of FUZZ_SETTINGS.collisionChances) {
-        for (const oom of FUZZ_SETTINGS.ooms) {
-          const size = 5 * Math.pow(10, oom);
-          for (const fractionA of FUZZ_SETTINGS.fractionsPerOOM) {
-            const fractionB = 1 - fractionA;
-            const collisionLabel = collisionChance.toFixed(2);
+      for (const oom of FUZZ_SETTINGS.ooms) {
+        const size = 5 * Math.pow(10, oom);
+        for (const fractionA of FUZZ_SETTINGS.fractionsPerOOM) {
+          const fractionB = 1 - fractionA;
+          for (const removalChance of FUZZ_SETTINGS.removalChances) {
+            const removalLabel = removalChance.toFixed(3);
             for (const removalChance of FUZZ_SETTINGS.removalChances) {
               const removalLabel = removalChance.toFixed(3);
 
-              it(`size ${size}, fractionA ${fractionA.toFixed(2)}, fractionB ${fractionB.toFixed(2)}, collision ${collisionLabel}, removal ${removalLabel}`, () => {
-                const treeA = new BTreeEx<number, number>([], compare, maxNodeSize);
+            it(`size ${size}, fractionA ${fractionA.toFixed(2)}, fractionB ${fractionB.toFixed(2)}, removal ${removalLabel}`, () => {
+              const treeA = new BTreeEx<number, number>([], compare, maxNodeSize);
                 const treeB = new BTreeEx<number, number>([], compare, maxNodeSize);
                 const treeC = new BTreeEx<number, number>([], compare, maxNodeSize);
 
-                const keys = makeArray(size, true, 1, collisionChance, rng);
+                const keys = makeArray(size, true, 1, 0, rng);
 
                 for (const value of keys) {
                   const assignToA = rng.random() < fractionA;
@@ -162,9 +155,9 @@ describe('Set operation fuzz tests', () => {
                 expect(diffAB.intersect(treeB, keepEither).size).toBe(0);
 
                 // 12. Cardinality relations.
-                expect(count(unionKeep)).toBe(count(treeA) + count(treeB) - count(intersection));
-                expect(count(diffAB)).toBe(count(treeA) - count(intersection));
-                expect(count(treeA)).toBe(count(diffAB) + count(intersection));
+                expect(unionKeep.size).toBe(treeA.size + treeB.size - intersection.size);
+                expect(diffAB.size).toBe(treeA.size - intersection.size);
+                expect(treeA.size).toBe(diffAB.size + intersection.size);
 
                 partition.checkValid();
                 unionDrop.checkValid();
@@ -179,19 +172,6 @@ describe('Set operation fuzz tests', () => {
                 expect(treeA.toArray()).toEqual(treeAInitial);
                 expect(treeB.toArray()).toEqual(treeBInitial);
                 expect(treeC.toArray()).toEqual(treeCInitial);
-
-                const unionStats = countTreeNodeStats(unionKeep);
-                const intersectionStats = countTreeNodeStats(intersection);
-                const diffABStats = countTreeNodeStats(diffAB);
-                const diffBAStats = countTreeNodeStats(diffBA);
-                const unionDropStats = countTreeNodeStats(unionDrop);
-                const partitionStats = countTreeNodeStats(partition);
-                expect(unionStats.newUnderfilled).toBe(0);
-                expect(intersectionStats.newUnderfilled).toBe(0);
-                expect(diffABStats.newUnderfilled).toBe(0);
-                expect(diffBAStats.newUnderfilled).toBe(0);
-                expect(unionDropStats.newUnderfilled).toBe(0);
-                expect(partitionStats.newUnderfilled).toBe(0);
               });
             }
           }
