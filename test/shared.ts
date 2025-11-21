@@ -4,6 +4,7 @@ import MersenneTwister from 'mersenne-twister';
 import type { BTreeWithInternals } from '../extended/shared';
 
 const rand = new MersenneTwister(1234);
+export const compareNumbers = (a: number, b: number) => a - b;
 
 export type TreeNodeStats = {
   total: number;

@@ -3,9 +3,11 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.forEachFuzzCase = exports.expectTreeMatchesEntries = exports.applyRemovalRunsToTree = exports.populateFuzzTrees = exports.buildEntriesFromMap = exports.randomInt = exports.makeArray = exports.addToBoth = exports.expectTreeEqualTo = exports.randInt = exports.logTreeNodeStats = exports.countTreeNodeStats = void 0;
+exports.forEachFuzzCase = exports.expectTreeMatchesEntries = exports.applyRemovalRunsToTree = exports.populateFuzzTrees = exports.buildEntriesFromMap = exports.randomInt = exports.makeArray = exports.addToBoth = exports.expectTreeEqualTo = exports.randInt = exports.logTreeNodeStats = exports.countTreeNodeStats = exports.compareNumbers = void 0;
 var mersenne_twister_1 = __importDefault(require("mersenne-twister"));
 var rand = new mersenne_twister_1.default(1234);
+var compareNumbers = function (a, b) { return a - b; };
+exports.compareNumbers = compareNumbers;
 function countTreeNodeStats(tree) {
     var root = tree._root;
     if (tree.size === 0 || !root)

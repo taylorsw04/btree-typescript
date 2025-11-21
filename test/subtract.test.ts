@@ -7,7 +7,8 @@ import {
   expectTreeMatchesEntries,
   forEachFuzzCase,
   populateFuzzTrees,
-  SetOperationFuzzSettings
+  SetOperationFuzzSettings,
+  compareNumbers
 } from './shared';
 
 type NotInCall = { key: number, value: number };
@@ -45,7 +46,6 @@ const tuplesToRecords = (entries: Array<[number, number]>): NotInCall[] =>
   entries.map(([key, value]) => ({ key, value }));
 
 const tuples = (...pairs: Array<[number, number]>) => pairs;
-const compareNumbers = (a: number, b: number) => a - b;
 const buildTree = (entries: Array<[number, number]>, maxNodeSize: number) =>
   new BTreeEx<number, number>(entries, compareNumbers, maxNodeSize);
 

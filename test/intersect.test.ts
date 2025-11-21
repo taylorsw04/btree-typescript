@@ -6,10 +6,9 @@ import {
   expectTreeMatchesEntries,
   forEachFuzzCase,
   populateFuzzTrees,
-  SetOperationFuzzSettings
+  SetOperationFuzzSettings,
+  compareNumbers
 } from './shared';
-
-var test: (name: string, f: () => void) => void = it;
 
 type SharedCall = { key: number, leftValue: number, rightValue: number };
 
@@ -38,10 +37,11 @@ const runForEachKeyInBothAndIntersect = (
 const expectForEachKeyInBothAndIntersectCalls = (
   left: BTreeEx<number, number>,
   right: BTreeEx<number, number>,
-  expected: SharedCall[]
+  expected: Array<[number, number, number]>
 ) => {
+  const expectedRecords = tuplesToRecords(expected);
   runForEachKeyInBothAndIntersect(left, right, (calls) => {
-    expect(calls).toEqual(expected);
+    expect(calls).toEqual(expectedRecords);
   });
 };
 
@@ -49,62 +49,75 @@ const tuplesToRecords = (entries: Array<[number, number, number]>): SharedCall[]
   entries.map(([key, leftValue, rightValue]) => ({ key, leftValue, rightValue }));
 
 const tuples = (...pairs: Array<[number, number]>) => pairs;
+const triples = (...triplets: Array<[number, number, number]>) => triplets;
+const buildTree = (entries: Array<[number, number]>, maxNodeSize: number) =>
+  new BTreeEx<number, number>(entries, compareNumbers, maxNodeSize);
 
-describe('BTree forEachKeyInBoth/intersect tests with fanout 32', testForEachKeyInBoth.bind(null, 32));
-describe('BTree forEachKeyInBoth/intersect tests with fanout 10', testForEachKeyInBoth.bind(null, 10));
-describe('BTree forEachKeyInBoth/intersect tests with fanout 4', testForEachKeyInBoth.bind(null, 4));
+describe.each([32, 10, 4])('BTree forEachKeyInBoth/intersect tests with fanout %i', (maxNodeSize) => {
+  const buildTreeForFanout = (entries: Array<[number, number]>) => buildTree(entries, maxNodeSize);
 
-function testForEachKeyInBoth(maxNodeSize: number) {
-  const compare = (a: number, b: number) => a - b;
+  const BASIC_CASES: Array<{
+    name: string;
+    left: Array<[number, number]>;
+    right: Array<[number, number]>;
+    expected: Array<[number, number, number]>;
+    alsoCheckSwap?: boolean;
+  }> = [
+    {
+      name: 'forEachKeyInBoth/intersect two empty trees',
+      left: tuples(),
+      right: tuples(),
+      expected: triples(),
+    },
+    {
+      name: 'forEachKeyInBoth/intersect empty tree with non-empty tree',
+      left: tuples(),
+      right: tuples([1, 10], [2, 20], [3, 30]),
+      expected: triples(),
+      alsoCheckSwap: true,
+    },
+    {
+      name: 'forEachKeyInBoth/intersect with no overlapping keys',
+      left: tuples([1, 10], [3, 30], [5, 50]),
+      right: tuples([2, 20], [4, 40], [6, 60]),
+      expected: triples(),
+    },
+    {
+      name: 'forEachKeyInBoth/intersect with single overlapping key',
+      left: tuples([1, 10], [2, 20], [3, 30]),
+      right: tuples([0, 100], [2, 200], [4, 400]),
+      expected: triples([2, 20, 200]),
+    },
+  ];
 
-  const buildTree = (entries: Array<[number, number]>) =>
-    new BTreeEx<number, number>(entries, compare, maxNodeSize);
-
-  test('forEachKeyInBoth/intersect two empty trees', () => {
-    const tree1 = buildTree([]);
-    const tree2 = buildTree([]);
-    expectForEachKeyInBothAndIntersectCalls(tree1, tree2, []);
+  BASIC_CASES.forEach(({ name, left, right, expected, alsoCheckSwap }) => {
+    it(name, () => {
+      const leftTree = buildTreeForFanout(left);
+      const rightTree = buildTreeForFanout(right);
+      expectForEachKeyInBothAndIntersectCalls(leftTree, rightTree, expected);
+      if (alsoCheckSwap) {
+        expectForEachKeyInBothAndIntersectCalls(rightTree, leftTree, expected);
+      }
+    });
   });
 
-  test('forEachKeyInBoth/intersect empty tree with non-empty tree', () => {
-    const tree1 = buildTree([]);
-    const tree2 = buildTree(tuples([1, 10], [2, 20], [3, 30]));
-    expectForEachKeyInBothAndIntersectCalls(tree1, tree2, []);
-    expectForEachKeyInBothAndIntersectCalls(tree2, tree1, []);
-  });
-
-  test('forEachKeyInBoth/intersect with no overlapping keys', () => {
-    const tree1 = buildTree(tuples([1, 10], [3, 30], [5, 50]));
-    const tree2 = buildTree(tuples([2, 20], [4, 40], [6, 60]));
-    expectForEachKeyInBothAndIntersectCalls(tree1, tree2, []);
-  });
-
-  test('forEachKeyInBoth/intersect with single overlapping key', () => {
-    const tree1 = buildTree(tuples([1, 10], [2, 20], [3, 30]));
-    const tree2 = buildTree(tuples([0, 100], [2, 200], [4, 400]));
-    expectForEachKeyInBothAndIntersectCalls(tree1, tree2, [{ key: 2, leftValue: 20, rightValue: 200 }]);
-  });
-
-  test('forEachKeyInBoth/intersect with multiple overlapping keys maintains tree contents', () => {
+  it('forEachKeyInBoth/intersect with multiple overlapping keys maintains tree contents', () => {
     const leftEntries: Array<[number, number]> = [[1, 10], [2, 20], [3, 30], [4, 40], [5, 50]];
     const rightEntries: Array<[number, number]> = [[0, 100], [2, 200], [4, 400], [6, 600]];
-    const tree1 = buildTree(leftEntries);
-    const tree2 = buildTree(rightEntries);
+    const tree1 = buildTreeForFanout(leftEntries);
+    const tree2 = buildTreeForFanout(rightEntries);
     const leftBefore = tree1.toArray();
     const rightBefore = tree2.toArray();
-    expectForEachKeyInBothAndIntersectCalls(tree1, tree2, [
-      { key: 2, leftValue: 20, rightValue: 200 },
-      { key: 4, leftValue: 40, rightValue: 400 },
-    ]);
+    expectForEachKeyInBothAndIntersectCalls(tree1, tree2, triples([2, 20, 200], [4, 40, 400]));
     expect(tree1.toArray()).toEqual(leftBefore);
     expect(tree2.toArray()).toEqual(rightBefore);
     tree1.checkValid();
     tree2.checkValid();
   });
 
-  test('forEachKeyInBoth/intersect with contiguous overlap yields sorted keys', () => {
-    const tree1 = buildTree(tuples([1, 1], [2, 2], [3, 3], [4, 4], [5, 5], [6, 6]));
-    const tree2 = buildTree(tuples([3, 30], [4, 40], [5, 50], [6, 60], [7, 70]));
+  it('forEachKeyInBoth/intersect with contiguous overlap yields sorted keys', () => {
+    const tree1 = buildTreeForFanout(tuples([1, 1], [2, 2], [3, 3], [4, 4], [5, 5], [6, 6]));
+    const tree2 = buildTreeForFanout(tuples([3, 30], [4, 40], [5, 50], [6, 60], [7, 70]));
     runForEachKeyInBothAndIntersect(tree1, tree2, (calls) => {
       expect(calls.map(c => c.key)).toEqual([3, 4, 5, 6]);
       expect(calls.map(c => c.leftValue)).toEqual([3, 4, 5, 6]);
@@ -112,7 +125,7 @@ function testForEachKeyInBoth(maxNodeSize: number) {
     });
   });
 
-  test('forEachKeyInBoth/intersect large overlapping range counts each shared key once', () => {
+  it('forEachKeyInBoth/intersect large overlapping range counts each shared key once', () => {
     const size = 1000;
     const overlapStart = 500;
     const leftEntries = Array.from({ length: size }, (_, i) => [i, i * 3] as [number, number]);
@@ -120,8 +133,8 @@ function testForEachKeyInBoth(maxNodeSize: number) {
       const key = i + overlapStart;
       return [key, key * 7] as [number, number];
     });
-    const tree1 = buildTree(leftEntries);
-    const tree2 = buildTree(rightEntries);
+    const tree1 = buildTreeForFanout(leftEntries);
+    const tree2 = buildTreeForFanout(rightEntries);
     runForEachKeyInBothAndIntersect(tree1, tree2, (calls) => {
       expect(calls.length).toBe(size - overlapStart);
       expect(calls[0]).toEqual({
@@ -136,9 +149,9 @@ function testForEachKeyInBoth(maxNodeSize: number) {
     });
   });
 
-  test('forEachKeyInBoth/intersect tree with itself visits each key once', () => {
+  it('forEachKeyInBoth/intersect tree with itself visits each key once', () => {
     const entries = Array.from({ length: 20 }, (_, i) => [i, i * 2] as [number, number]);
-    const tree = buildTree(entries);
+    const tree = buildTreeForFanout(entries);
     runForEachKeyInBothAndIntersect(tree, tree, (calls) => {
       expect(calls.length).toBe(entries.length);
       for (let i = 0; i < entries.length; i++) {
@@ -148,29 +161,21 @@ function testForEachKeyInBoth(maxNodeSize: number) {
     });
   });
 
-  test('forEachKeyInBoth/intersect arguments determine left/right values', () => {
-    const tree1 = buildTree(tuples([1, 100], [2, 200], [4, 400]));
-    const tree2 = buildTree(tuples([2, 20], [3, 30], [4, 40]));
-    expectForEachKeyInBothAndIntersectCalls(tree1, tree2, [
-      { key: 2, leftValue: 200, rightValue: 20 },
-      { key: 4, leftValue: 400, rightValue: 40 },
-    ]);
-    expectForEachKeyInBothAndIntersectCalls(tree2, tree1, [
-      { key: 2, leftValue: 20, rightValue: 200 },
-      { key: 4, leftValue: 40, rightValue: 400 },
-    ]);
+  it('forEachKeyInBoth/intersect arguments determine left/right values', () => {
+    const tree1 = buildTreeForFanout(tuples([1, 100], [2, 200], [4, 400]));
+    const tree2 = buildTreeForFanout(tuples([2, 20], [3, 30], [4, 40]));
+    expectForEachKeyInBothAndIntersectCalls(tree1, tree2, triples([2, 200, 20], [4, 400, 40]));
+    expectForEachKeyInBothAndIntersectCalls(tree2, tree1, triples([2, 20, 200], [4, 40, 400]));
   });
-}
+});
 
 describe('BTree forEachKeyInBoth early exiting', () => {
-  const compare = (a: number, b: number) => a - b;
+  const buildTreeForEarlyExit = (entries: Array<[number, number]>) =>
+    buildTree(entries, 4);
 
-  const buildTree = (entries: Array<[number, number]>) =>
-    new BTreeEx<number, number>(entries, compare, 4);
-
-  test('forEachKeyInBoth returns undefined when callback returns void', () => {
-    const tree1 = buildTree(tuples([1, 10], [2, 20], [3, 30]));
-    const tree2 = buildTree(tuples([0, 100], [2, 200], [3, 300], [4, 400]));
+  it('forEachKeyInBoth returns undefined when callback returns void', () => {
+    const tree1 = buildTreeForEarlyExit(tuples([1, 10], [2, 20], [3, 30]));
+    const tree2 = buildTreeForEarlyExit(tuples([0, 100], [2, 200], [3, 300], [4, 400]));
     const visited: number[] = [];
     const result = tree1.forEachKeyInBoth(tree2, key => {
       visited.push(key);
@@ -179,9 +184,9 @@ describe('BTree forEachKeyInBoth early exiting', () => {
     expect(visited).toEqual([2, 3]);
   });
 
-  test('forEachKeyInBoth ignores undefined break values and completes traversal', () => {
-    const tree1 = buildTree(tuples([1, 10], [2, 20], [3, 30]));
-    const tree2 = buildTree(tuples([2, 200], [3, 300], [5, 500]));
+  it('forEachKeyInBoth ignores undefined break values and completes traversal', () => {
+    const tree1 = buildTreeForEarlyExit(tuples([1, 10], [2, 20], [3, 30]));
+    const tree2 = buildTreeForEarlyExit(tuples([2, 200], [3, 300], [5, 500]));
     const visited: number[] = [];
     const result = tree1.forEachKeyInBoth(tree2, key => {
       visited.push(key);
@@ -191,9 +196,9 @@ describe('BTree forEachKeyInBoth early exiting', () => {
     expect(visited).toEqual([2, 3]);
   });
 
-  test('forEachKeyInBoth breaks early when callback returns a value', () => {
-    const tree1 = buildTree(tuples([1, 10], [2, 20], [3, 30], [4, 40]));
-    const tree2 = buildTree(tuples([2, 200], [3, 300], [4, 400], [5, 500]));
+  it('forEachKeyInBoth breaks early when callback returns a value', () => {
+    const tree1 = buildTreeForEarlyExit(tuples([1, 10], [2, 20], [3, 30], [4, 40]));
+    const tree2 = buildTreeForEarlyExit(tuples([2, 200], [3, 300], [4, 400], [5, 500]));
     const visited: number[] = [];
     const breakResult = tree1.forEachKeyInBoth(tree2, (key, leftValue, rightValue) => {
       visited.push(key);
@@ -207,7 +212,7 @@ describe('BTree forEachKeyInBoth early exiting', () => {
 });
 
 describe('BTree forEachKeyInBoth and intersect input/output validation', () => {
-  test('forEachKeyInBoth throws error when comparators differ', () => {
+  it('forEachKeyInBoth throws error when comparators differ', () => {
     const tree1 = new BTreeEx<number, number>([[1, 10]], (a, b) => b + a);
     const tree2 = new BTreeEx<number, number>([[2, 20]], (a, b) => b - a);
     expect(() => tree1.forEachKeyInBoth(tree2, () => { })).toThrow(comparatorErrorMsg);
@@ -216,7 +221,6 @@ describe('BTree forEachKeyInBoth and intersect input/output validation', () => {
 });
 
 describe('BTree forEachKeyInBoth/intersect fuzz tests', () => {
-  const compare = (a: number, b: number) => a - b;
   const FUZZ_SETTINGS: SetOperationFuzzSettings = {
     branchingFactors: [4, 5, 32],
     ooms: [2, 3],
@@ -230,15 +234,15 @@ describe('BTree forEachKeyInBoth/intersect fuzz tests', () => {
   const rng = new MersenneTwister(0xC0FFEE);
 
   forEachFuzzCase(FUZZ_SETTINGS, ({ maxNodeSize, size, fractionA, fractionB, removalChance, removalLabel }) => {
-    test(`branch ${maxNodeSize}, size ${size}, fractionA ${fractionA.toFixed(2)}, fractionB ${fractionB.toFixed(2)}, removal ${removalLabel}`, () => {
-      const treeA = new BTreeEx<number, number>([], compare, maxNodeSize);
-      const treeB = new BTreeEx<number, number>([], compare, maxNodeSize);
+    it(`branch ${maxNodeSize}, size ${size}, fractionA ${fractionA.toFixed(2)}, fractionB ${fractionB.toFixed(2)}, removal ${removalLabel}`, () => {
+      const treeA = new BTreeEx<number, number>([], compareNumbers, maxNodeSize);
+      const treeB = new BTreeEx<number, number>([], compareNumbers, maxNodeSize);
       const [treeAEntries, treeBEntries] = populateFuzzTrees(
         [
           { tree: treeA, fraction: fractionA, removalChance },
           { tree: treeB, fraction: fractionB, removalChance }
         ],
-        { rng, size, compare, maxNodeSize, minAssignmentsPerKey: 1 }
+        { rng, size, compare: compareNumbers, maxNodeSize, minAssignmentsPerKey: 1 }
       );
 
       const bMap = new Map<number, number>(treeBEntries);
@@ -249,13 +253,8 @@ describe('BTree forEachKeyInBoth/intersect fuzz tests', () => {
           expectedTuples.push([key, leftValue, rightValue]);
       }
 
-      const expectedRecords = tuplesToRecords(expectedTuples);
-      expectForEachKeyInBothAndIntersectCalls(treeA, treeB, expectedRecords);
-      const swappedExpected = expectedRecords.map(({ key, leftValue, rightValue }) => ({
-        key,
-        leftValue: rightValue,
-        rightValue: leftValue,
-      }));
+      expectForEachKeyInBothAndIntersectCalls(treeA, treeB, expectedTuples);
+      const swappedExpected = expectedTuples.map(([key, leftValue, rightValue]) => [key, rightValue, leftValue] as [number, number, number]);
       expectForEachKeyInBothAndIntersectCalls(treeB, treeA, swappedExpected);
 
       expectTreeMatchesEntries(treeA, treeAEntries);
