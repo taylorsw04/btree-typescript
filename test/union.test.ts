@@ -56,7 +56,15 @@ function testUnion(maxNodeSize: number) {
   };
 
   type UnionExpectationOptions = {
+    after?: (ctx: { result: BTreeEx<number, number>, expected: BTreeEx<number, number> }) => void;
     expectedUnionFn?: UnionFn;
+  };
+
+  const sumUnion: UnionFn = (_key, leftValue, rightValue) => leftValue + rightValue;
+  const preferLeft: UnionFn = (_key, leftValue) => leftValue;
+  const preferRight: UnionFn = (_key, _leftValue, rightValue) => rightValue;
+  const failUnion = (message: string): UnionFn => () => {
+    throw new Error(message);
   };
 
   const naiveUnion = (
@@ -85,10 +93,9 @@ function testUnion(maxNodeSize: number) {
     left: BTreeEx<number, number>,
     right: BTreeEx<number, number>,
     unionFn: UnionFn,
-    after?: (ctx: { result: BTreeEx<number, number>, expected: BTreeEx<number, number> }) => void,
     options: UnionExpectationOptions = {}
   ) => {
-    const expectedUnionFn = options.expectedUnionFn ?? unionFn;
+    const { expectedUnionFn = unionFn, after } = options;
     const expected = naiveUnion(left, right, expectedUnionFn);
     const result = left.union(right, unionFn);
     expect(result.toArray()).toEqual(expected.toArray());
@@ -108,19 +115,13 @@ function testUnion(maxNodeSize: number) {
     expectRootLeafState(tree1, false);
     expectRootLeafState(tree2, false);
 
-    let unionCalls = 0;
-    const unionFn: UnionFn = () => {
-      unionCalls++;
-      return 0;
-    };
-
-    expectUnionMatchesBaseline(tree1, tree2, unionFn, ({ result }) => {
-      const resultRoot = result['_root'] as any;
-      expect(sharesNode(resultRoot, tree1['_root'] as any)).toBe(true);
-      expect(sharesNode(resultRoot, tree2['_root'] as any)).toBe(true);
+    expectUnionMatchesBaseline(tree1, tree2, failUnion('Union callback should not run for disjoint roots'), {
+      after: ({ result }) => {
+        const resultRoot = result['_root'] as any;
+        expect(sharesNode(resultRoot, tree1['_root'] as any)).toBe(true);
+        expect(sharesNode(resultRoot, tree2['_root'] as any)).toBe(true);
+      }
     });
-
-    expect(unionCalls).toBe(0);
   });
 
   test('Union leaf roots with intersecting keys uses union callback', () => {
@@ -131,14 +132,16 @@ function testUnion(maxNodeSize: number) {
     expectRootLeafState(tree2, true);
 
     const calls: Array<{ key: number, leftValue: number, rightValue: number }> = [];
-    const unionFn: UnionFn = (key, leftValue, rightValue) => {
-      calls.push({ key, leftValue, rightValue });
-      return leftValue + rightValue;
-    };
 
-    expectUnionMatchesBaseline(tree1, tree2, unionFn, undefined, {
-      expectedUnionFn: (_k, leftValue, rightValue) => leftValue + rightValue
-    });
+    expectUnionMatchesBaseline(
+      tree1,
+      tree2,
+      (key, leftValue, rightValue) => {
+        calls.push({ key, leftValue, rightValue });
+        return leftValue + rightValue;
+      },
+      { expectedUnionFn: sumUnion }
+    );
     expect(calls).toEqual([{ key: 2, leftValue: 20, rightValue: 200 }]);
   });
 
@@ -149,16 +152,11 @@ function testUnion(maxNodeSize: number) {
     expectRootLeafState(tree1, true);
     expectRootLeafState(tree2, true);
 
-    let unionCalls = 0;
-    const unionFn: UnionFn = () => {
-      unionCalls++;
-      return 0;
-    };
-
-    const { result } = expectUnionMatchesBaseline(tree1, tree2, unionFn, undefined, {
-      expectedUnionFn: (_k, leftValue, rightValue) => leftValue + rightValue
-    });
-    expect(unionCalls).toBe(0);
+    const { result } = expectUnionMatchesBaseline(
+      tree1,
+      tree2,
+      failUnion('Union callback should not run for disjoint leaf roots')
+    );
     expect(result.toArray()).toEqual([
       [1, 1],
       [2, 1002],
@@ -178,14 +176,16 @@ function testUnion(maxNodeSize: number) {
     expectRootLeafState(tree2, false);
 
     let unionCalls = 0;
-    const unionFn: UnionFn = (_key, leftValue, rightValue) => {
-      unionCalls++;
-      return leftValue + rightValue;
-    };
 
-    const { result } = expectUnionMatchesBaseline(tree1, tree2, unionFn, undefined, {
-      expectedUnionFn: (_k, leftValue, rightValue) => leftValue + rightValue
-    });
+    const { result } = expectUnionMatchesBaseline(
+      tree1,
+      tree2,
+      (_key, leftValue, rightValue) => {
+        unionCalls++;
+        return sumUnion(_key, leftValue, rightValue);
+      },
+      { expectedUnionFn: sumUnion }
+    );
     expect(unionCalls).toBe(1);
     expect(result.get(size - 1)).toBe((size - 1) + (size - 1) * 3);
     expect(result.size).toBe(tree1.size + tree2.size - 1);
@@ -202,14 +202,11 @@ function testUnion(maxNodeSize: number) {
     expectRootLeafState(tree1, false);
     expectRootLeafState(tree2, false);
 
-    let unionCalls = 0;
-    const unionFn: UnionFn = (_key, leftValue, rightValue) => {
-      unionCalls++;
-      return leftValue + rightValue;
-    };
-
-    const { result } = expectUnionMatchesBaseline(tree1, tree2, unionFn);
-    expect(unionCalls).toBe(0);
+    const { result } = expectUnionMatchesBaseline(
+      tree1,
+      tree2,
+      failUnion('Union callback should not run when all leaves are disjoint')
+    );
     expect(result.size).toBe(tree1.size + tree2.size);
   });
 
@@ -222,14 +219,16 @@ function testUnion(maxNodeSize: number) {
     expectRootLeafState(tree2, true);
 
     const seenKeys: number[] = [];
-    const unionFn: UnionFn = (key, _leftValue, rightValue) => {
-      seenKeys.push(key);
-      return rightValue;
-    };
 
-    expectUnionMatchesBaseline(tree1, tree2, unionFn, undefined, {
-      expectedUnionFn: (_k, _leftValue, rightValue) => rightValue
-    });
+    expectUnionMatchesBaseline(
+      tree1,
+      tree2,
+      (key, _leftValue, rightValue) => {
+        seenKeys.push(key);
+        return rightValue;
+      },
+      { expectedUnionFn: preferRight }
+    );
     expect(seenKeys.sort((a, b) => a - b)).toEqual([1, Math.floor(size / 2), size - 1]);
   });
 
@@ -242,14 +241,16 @@ function testUnion(maxNodeSize: number) {
     expectRootLeafState(tree2, false);
 
     let unionCalls = 0;
-    const unionFn: UnionFn = (_key, _leftValue, rightValue) => {
-      unionCalls++;
-      return rightValue;
-    };
 
-    const { result } = expectUnionMatchesBaseline(tree1, tree2, unionFn, undefined, {
-      expectedUnionFn: (_k, _leftValue, rightValue) => rightValue
-    });
+    const { result } = expectUnionMatchesBaseline(
+      tree1,
+      tree2,
+      (_key, _leftValue, rightValue) => {
+        unionCalls++;
+        return rightValue;
+      },
+      { expectedUnionFn: preferRight }
+    );
     expect(unionCalls).toBe(1);
     expect(result.get(size - 1)).toBe((size - 1) * 10);
     expect(result.size).toBe(tree1.size + tree2.size - 1);
@@ -263,14 +264,11 @@ function testUnion(maxNodeSize: number) {
     expectRootLeafState(treeOdd, false);
     expectRootLeafState(treeEven, false);
 
-    let unionCalls = 0;
-    const unionFn: UnionFn = () => {
-      unionCalls++;
-      return 0;
-    };
-
-    const { result } = expectUnionMatchesBaseline(treeOdd, treeEven, unionFn);
-    expect(unionCalls).toBe(0);
+    const { result } = expectUnionMatchesBaseline(
+      treeOdd,
+      treeEven,
+      failUnion('Union callback should not be invoked for disjoint parity sets')
+    );
     expect(result.size).toBe(treeOdd.size + treeEven.size);
   });
 
@@ -284,9 +282,7 @@ function testUnion(maxNodeSize: number) {
     expectRootLeafState(tree1, true);
     expectRootLeafState(tree2, true);
 
-    const unioned = tree1.union(tree2, () => {
-      throw new Error('Should not be called for disjoint keys');
-    });
+    const unioned = tree1.union(tree2, failUnion('Should not be called for disjoint keys'));
     const resultRoot = unioned['_root'] as any;
     const expectedKeys = keysA.concat(keysB).sort(compare);
     expect(resultRoot.isLeaf).toBe(true);
@@ -316,31 +312,11 @@ function testUnion(maxNodeSize: number) {
     const first = buildUnderfilledTree(0);
     const second = buildUnderfilledTree(first.nextKey + maxNodeSize * 10);
 
-    const unioned = first.tree.union(second.tree, () => { throw new Error('Should not be called for disjoint keys'); });
+    const unioned = first.tree.union(second.tree, failUnion('Should not be called for disjoint keys'));
     const resultRoot = unioned['_root'] as any;
     expect(resultRoot.isLeaf).toBe(false);
     expect(resultRoot.children.length).toBeGreaterThanOrEqual(minChildren);
     expect(resultRoot.children.length).toBe(first.childCount + second.childCount);
-  });
-
-  test('Union with single boundary overlap prefers right value', () => {
-    const size = maxNodeSize * 2;
-    const tree1 = buildTree(range(0, size), 1, 0);
-    const tree2 = buildTree(range(size - 1, size - 1 + size), 10, 0);
-
-    expectRootLeafState(tree1, false);
-    expectRootLeafState(tree2, false);
-
-    let unionCalls = 0;
-    const unionFn: UnionFn = (_key, _leftValue, rightValue) => {
-      unionCalls++;
-      return rightValue;
-    };
-
-    expectUnionMatchesBaseline(tree1, tree2, unionFn, undefined, {
-      expectedUnionFn: (_k, _leftValue, rightValue) => rightValue
-    });
-    expect(unionCalls).toBe(1);
   });
 
   test('Union overlapping prefix equal to branching factor', () => {
@@ -361,37 +337,35 @@ function testUnion(maxNodeSize: number) {
     expectRootLeafState(tree2, false);
 
     const unionedKeys: number[] = [];
-    const unionFn: UnionFn = (key, leftValue, rightValue) => {
-      unionedKeys.push(key);
-      return leftValue + rightValue;
-    };
 
-    expectUnionMatchesBaseline(tree1, tree2, unionFn, undefined, {
-      expectedUnionFn: (_k, leftValue, rightValue) => leftValue + rightValue
-    });
+    expectUnionMatchesBaseline(
+      tree1,
+      tree2,
+      (key, leftValue, rightValue) => {
+        unionedKeys.push(key);
+        return leftValue + rightValue;
+      },
+      { expectedUnionFn: sumUnion }
+    );
     expect(unionedKeys.sort((a, b) => a - b)).toEqual(range(0, shared));
   });
 
   test('Union two empty trees', () => {
     const tree1 = new BTreeEx<number, number>([], compare, maxNodeSize);
     const tree2 = new BTreeEx<number, number>([], compare, maxNodeSize);
-    const unionFn: UnionFn = (_k, v1, v2) => v1 + v2;
 
-    const { result } = expectUnionMatchesBaseline(tree1, tree2, unionFn, undefined, {
-      expectedUnionFn: (_k, v1, v2) => v1 + v2
-    });
+    const { result } = expectUnionMatchesBaseline(tree1, tree2, sumUnion);
     expect(result.size).toBe(0);
   });
 
   test('Union empty tree with non-empty tree', () => {
     const tree1 = new BTreeEx<number, number>([], compare, maxNodeSize);
     const tree2 = new BTreeEx<number, number>([[1, 10], [2, 20], [3, 30]], compare, maxNodeSize);
-    const unionFn: UnionFn = (_k, v1, v2) => v1 + v2;
 
-    const { result: leftUnion } = expectUnionMatchesBaseline(tree1, tree2, unionFn);
+    const { result: leftUnion } = expectUnionMatchesBaseline(tree1, tree2, sumUnion);
     expect(leftUnion.toArray()).toEqual(tree2.toArray());
 
-    const { result: rightUnion } = expectUnionMatchesBaseline(tree2, tree1, unionFn);
+    const { result: rightUnion } = expectUnionMatchesBaseline(tree2, tree1, sumUnion);
     expect(rightUnion.toArray()).toEqual(tree2.toArray());
     expect(tree1.toArray()).toEqual([]);
     expect(tree2.toArray()).toEqual([[1, 10], [2, 20], [3, 30]]);
@@ -402,13 +376,12 @@ function testUnion(maxNodeSize: number) {
   test('Union with no overlapping keys', () => {
     const tree1 = new BTreeEx<number, number>([[1, 10], [3, 30], [5, 50]], compare, maxNodeSize);
     const tree2 = new BTreeEx<number, number>([[2, 20], [4, 40], [6, 60]], compare, maxNodeSize);
-    const unionFn: UnionFn = () => {
-      throw new Error('Should not be called for non-overlapping keys');
-    };
 
-    const { result } = expectUnionMatchesBaseline(tree1, tree2, unionFn, undefined, {
-      expectedUnionFn: unionFn
-    });
+    const { result } = expectUnionMatchesBaseline(
+      tree1,
+      tree2,
+      failUnion('Should not be called for non-overlapping keys')
+    );
 
     expect(result.size).toBe(6);
     expect(result.toArray()).toEqual([[1, 10], [2, 20], [3, 30], [4, 40], [5, 50], [6, 60]]);
@@ -417,31 +390,24 @@ function testUnion(maxNodeSize: number) {
   test('Union with completely overlapping keys - sum values', () => {
     const tree1 = new BTreeEx<number, number>([[1, 10], [2, 20], [3, 30]], compare, maxNodeSize);
     const tree2 = new BTreeEx<number, number>([[1, 5], [2, 15], [3, 25]], compare, maxNodeSize);
-    const unionFn: UnionFn = (_k, v1, v2) => v1 + v2;
 
-    const { result } = expectUnionMatchesBaseline(tree1, tree2, unionFn, undefined, {
-      expectedUnionFn: (_k, v1, v2) => v1 + v2
-    });
+    const { result } = expectUnionMatchesBaseline(tree1, tree2, sumUnion);
     expect(result.size).toBe(tree1.size);
   });
 
   test('Union with completely overlapping keys - prefer left', () => {
     const tree1 = new BTreeEx<number, number>([[1, 10], [2, 20], [3, 30]], compare, maxNodeSize);
     const tree2 = new BTreeEx<number, number>([[1, 100], [2, 200], [3, 300]], compare, maxNodeSize);
-    const unionFn: UnionFn = (_k, v1, _v2) => v1;
 
-    const { result } = expectUnionMatchesBaseline(tree1, tree2, unionFn, undefined, {
-      expectedUnionFn: (_k, v1, _v2) => v1
-    });
+    const { result } = expectUnionMatchesBaseline(tree1, tree2, preferLeft);
     expect(result.toArray()).toEqual(tree1.toArray());
   });
 
   test('Union with completely overlapping keys - prefer right', () => {
     const tree1 = new BTreeEx<number, number>([[1, 10], [2, 20], [3, 30]], compare, maxNodeSize);
     const tree2 = new BTreeEx<number, number>([[1, 100], [2, 200], [3, 300]], compare, maxNodeSize);
-    const unionFn: UnionFn = (_k, _v1, v2) => v2;
 
-    const { result } = expectUnionMatchesBaseline(tree1, tree2, unionFn);
+    const { result } = expectUnionMatchesBaseline(tree1, tree2, (_k, _v1, v2) => v2);
     expect(result.toArray()).toEqual(tree2.toArray());
   });
 
@@ -450,26 +416,26 @@ function testUnion(maxNodeSize: number) {
     const tree2 = new BTreeEx<number, number>([[3, 300], [4, 400], [5, 500], [6, 600]], compare, maxNodeSize);
 
     const unionedKeys: number[] = [];
-    const unionFn: UnionFn = (key, v1, v2) => {
-      unionedKeys.push(key);
-      return v1 + v2;
-    };
 
-    expectUnionMatchesBaseline(tree1, tree2, unionFn, undefined, {
-      expectedUnionFn: (_k, v1, v2) => v1 + v2
-    });
+    expectUnionMatchesBaseline(
+      tree1,
+      tree2,
+      (key, v1, v2) => {
+        unionedKeys.push(key);
+        return v1 + v2;
+      },
+      { expectedUnionFn: sumUnion }
+    );
     expect(unionedKeys.sort((a, b) => a - b)).toEqual([3, 4]);
   });
 
   test('Union with overlapping keys can delete entries', () => {
     const tree1 = new BTreeEx<number, number>([[1, 10], [2, 20], [3, 30], [4, 40]], compare, maxNodeSize);
     const tree2 = new BTreeEx<number, number>([[2, 200], [3, 300], [4, 400], [5, 500]], compare, maxNodeSize);
-    const unionFn: UnionFn = (k, v1, v2) => {
+    const { result } = expectUnionMatchesBaseline(tree1, tree2, (k, v1, v2) => {
       if (k === 3) return undefined;
       return v1 + v2;
-    };
-
-    const { result } = expectUnionMatchesBaseline(tree1, tree2, unionFn);
+    });
     expect(result.has(3)).toBe(false);
   });
 
@@ -477,16 +443,18 @@ function testUnion(maxNodeSize: number) {
     const tree1 = new BTreeEx<number, number>([[1, 10], [2, 20]], compare, maxNodeSize);
     const tree2 = new BTreeEx<number, number>([[2, 20], [3, 30]], compare, maxNodeSize);
 
-    const unionCallLog: Array<{k: number, v1: number, v2: number}> = [];
-    const unionFn: UnionFn = (k, v1, v2) => {
-      unionCallLog.push({k, v1, v2});
-      return v1;
-    };
+    const unionCallLog: Array<{ k: number, v1: number, v2: number }> = [];
 
-    expectUnionMatchesBaseline(tree1, tree2, unionFn, undefined, {
-      expectedUnionFn: (_k, v1, v2) => v1
-    });
-    expect(unionCallLog).toEqual([{k: 2, v1: 20, v2: 20}]);
+    expectUnionMatchesBaseline(
+      tree1,
+      tree2,
+      (k, v1, v2) => {
+        unionCallLog.push({ k, v1, v2 });
+        return v1;
+      },
+      { expectedUnionFn: preferLeft }
+    );
+    expect(unionCallLog).toEqual([{ k: 2, v1: 20, v2: 20 }]);
   });
 
   test('Union does not mutate input trees', () => {
@@ -494,12 +462,11 @@ function testUnion(maxNodeSize: number) {
     const entries2: [number, number][] = [[2, 200], [3, 300], [4, 400]];
     const tree1 = new BTreeEx<number, number>(entries1, compare, maxNodeSize);
     const tree2 = new BTreeEx<number, number>(entries2, compare, maxNodeSize);
-    const unionFn: UnionFn = (_k, v1, v2) => v1 + v2;
 
     const snapshot1 = tree1.toArray();
     const snapshot2 = tree2.toArray();
 
-    expectUnionMatchesBaseline(tree1, tree2, unionFn);
+    expectUnionMatchesBaseline(tree1, tree2, sumUnion);
 
     expect(tree1.toArray()).toEqual(snapshot1);
     expect(tree2.toArray()).toEqual(snapshot2);
@@ -508,24 +475,22 @@ function testUnion(maxNodeSize: number) {
   });
 
   test('Union large trees with some overlaps', () => {
-    const entries1: [number, number][] = [];
-    for (let i = 0; i < 1000; i++) entries1.push([i, i]);
-
-    const entries2: [number, number][] = [];
-    for (let i = 500; i < 1500; i++) entries2.push([i, i * 10]);
+    const entries1: [number, number][] = range(0, 1000).map(i => [i, i]);
+    const entries2: [number, number][] = range(500, 1500).map(i => [i, i * 10]);
 
     const tree1 = new BTreeEx<number, number>(entries1, compare, maxNodeSize);
     const tree2 = new BTreeEx<number, number>(entries2, compare, maxNodeSize);
 
     let unionCount = 0;
-    const unionFn: UnionFn = (k, v1, v2) => {
-      unionCount++;
-      return v1 + v2;
-    };
-
-    expectUnionMatchesBaseline(tree1, tree2, unionFn, undefined, {
-      expectedUnionFn: (_k, v1, v2) => v1 + v2
-    });
+    expectUnionMatchesBaseline(
+      tree1,
+      tree2,
+      (k, v1, v2) => {
+        unionCount++;
+        return v1 + v2;
+      },
+      { expectedUnionFn: sumUnion }
+    );
     expect(unionCount).toBe(500);
   });
 
@@ -542,14 +507,16 @@ function testUnion(maxNodeSize: number) {
     }
 
     const unionedKeys: number[] = [];
-    const unionFn: UnionFn = (key, v1, v2) => {
-      unionedKeys.push(key);
-      return v1 + v2;
-    };
 
-    expectUnionMatchesBaseline(tree1, tree2, unionFn, undefined, {
-      expectedUnionFn: (_k, v1, v2) => v1 + v2
-    });
+    expectUnionMatchesBaseline(
+      tree1,
+      tree2,
+      (key, v1, v2) => {
+        unionedKeys.push(key);
+        return v1 + v2;
+      },
+      { expectedUnionFn: sumUnion }
+    );
 
     const expectedUnionedKeys = range(50, 150).filter(k => k % 2 === 0);
     expect(unionedKeys.sort((a, b) => a - b)).toEqual(expectedUnionedKeys);
@@ -558,9 +525,8 @@ function testUnion(maxNodeSize: number) {
   test('Union result can be modified without affecting inputs', () => {
     const tree1 = new BTreeEx<number, number>([[1, 10], [2, 20]], compare, maxNodeSize);
     const tree2 = new BTreeEx<number, number>([[3, 30], [4, 40]], compare, maxNodeSize);
-    const unionFn: UnionFn = (_k, v1, v2) => v1 + v2;
 
-    const { result } = expectUnionMatchesBaseline(tree1, tree2, unionFn);
+    const { result } = expectUnionMatchesBaseline(tree1, tree2, sumUnion);
 
     result.set(1, 100);
     result.set(5, 50);
@@ -580,13 +546,12 @@ function testUnion(maxNodeSize: number) {
     const size = maxNodeSize * 2 + 5;
     const tree = buildTree(range(0, size), 3, 1);
     let unionCalls = 0;
-    const unionFn: UnionFn = (key, leftValue, rightValue) => {
-      unionCalls++;
-      return leftValue + rightValue;
-    };
 
     const original = tree.toArray();
-    const result = tree.union(tree, unionFn);
+    const result = tree.union(tree, (key, leftValue, rightValue) => {
+      unionCalls++;
+      return sumUnion(key, leftValue, rightValue);
+    });
     expect(unionCalls).toBe(0);
     expect(result).not.toBe(tree);
     expect(result.toArray()).toEqual(original);
@@ -597,13 +562,11 @@ function testUnion(maxNodeSize: number) {
     const size = maxNodeSize * 2 + 1;
     const tree = buildTree(range(0, size), 1, 0);
     let unionCalls = 0;
-    const unionFn: UnionFn = (_key, _leftValue, _rightValue) => {
+    const original = tree.toArray();
+    const result = union(tree, tree, (_key: number, _leftValue: number, _rightValue: number) => {
       unionCalls++;
       return undefined;
-    };
-
-    const original = tree.toArray();
-    const result = union(tree, tree, unionFn);
+    });
     expect(unionCalls).toBe(0);
     expect(result).not.toBe(tree);
     expect(result.toArray()).toEqual(original);
@@ -620,13 +583,12 @@ function testUnion(maxNodeSize: number) {
 
     const tree1 = new BTreeEx<number, number>(entries1, compare, maxNodeSize);
     const tree2 = new BTreeEx<number, number>(entries2, compare, maxNodeSize);
-    const unionFn: UnionFn = () => {
-      throw new Error('Should not be called - no overlaps');
-    };
 
-    const { result } = expectUnionMatchesBaseline(tree1, tree2, unionFn, undefined, {
-      expectedUnionFn: unionFn
-    });
+    const { result } = expectUnionMatchesBaseline(
+      tree1,
+      tree2,
+      failUnion('Should not be called - no overlaps')
+    );
 
     expect(result.size).toBe(300);
     expect(result.get(1)).toBe(1);
@@ -640,39 +602,16 @@ function testUnion(maxNodeSize: number) {
   test('Union with single element trees', () => {
     const tree1 = new BTreeEx<number, number>([[5, 50]], compare, maxNodeSize);
     const tree2 = new BTreeEx<number, number>([[5, 500]], compare, maxNodeSize);
-    const unionFn: UnionFn = (_k, v1, v2) => Math.max(v1, v2);
 
-    const { result } = expectUnionMatchesBaseline(tree1, tree2, unionFn);
+    const { result } = expectUnionMatchesBaseline(tree1, tree2, (_k, v1, v2) => Math.max(v1, v2));
     expect(result.toArray()).toEqual([[5, 500]]);
-  });
-
-  test('Union interleaved keys', () => {
-    const tree1 = new BTreeEx<number, number>([], compare, maxNodeSize);
-    for (let i = 1; i <= 100; i += 2)
-      tree1.set(i, i);
-
-    const tree2 = new BTreeEx<number, number>([], compare, maxNodeSize);
-    for (let i = 2; i <= 100; i += 2)
-      tree2.set(i, i);
-
-    const unionFn: UnionFn = () => {
-      throw new Error('Should not be called - no overlapping keys');
-    };
-
-    const { result } = expectUnionMatchesBaseline(tree1, tree2, unionFn, undefined, {
-      expectedUnionFn: unionFn
-    });
-    expect(result.size).toBe(100);
-    for (let i = 1; i <= 100; i++)
-      expect(result.get(i)).toBe(i);
   });
 
   test('Union excluding all overlapping keys', () => {
     const tree1 = new BTreeEx<number, number>([[1, 10], [2, 20], [3, 30]], compare, maxNodeSize);
     const tree2 = new BTreeEx<number, number>([[2, 200], [3, 300], [4, 400]], compare, maxNodeSize);
-    const unionFn: UnionFn = () => undefined;
 
-    const { result } = expectUnionMatchesBaseline(tree1, tree2, unionFn);
+    const { result } = expectUnionMatchesBaseline(tree1, tree2, () => undefined);
     expect(result.toArray()).toEqual([[1, 10], [4, 400]]);
   });
 
@@ -685,17 +624,11 @@ function testUnion(maxNodeSize: number) {
     for (let i = 10001; i <= 20000; i++)
       tree2.set(i, i);
 
-    let unionCalls = 0;
-    const unionFn: UnionFn = (_k, v1, v2) => {
-      unionCalls++;
-      return v1 + v2;
-    };
-
-    const { result } = expectUnionMatchesBaseline(tree1, tree2, unionFn, undefined, {
-      expectedUnionFn: unionFn
-    });
-
-    expect(unionCalls).toBe(0);
+    const { result } = expectUnionMatchesBaseline(
+      tree1,
+      tree2,
+      failUnion('Union callback should not run for disjoint ranges')
+    );
     expect(result.size).toBe(tree1.size + tree2.size);
     expect(result.get(0)).toBe(0);
     expect(result.get(20000)).toBe(20000);
@@ -714,10 +647,7 @@ function testUnion(maxNodeSize: number) {
     for (let k of keys2)
       tree2.set(k, k * 10);
 
-    const preferLeft: UnionFn = (_key, leftValue) => leftValue;
-    expectUnionMatchesBaseline(tree1, tree2, preferLeft, undefined, {
-      expectedUnionFn: preferLeft
-    });
+    expectUnionMatchesBaseline(tree1, tree2, preferLeft);
   });
 
   test('Union trees with ~10% overlap', () => {
@@ -736,11 +666,7 @@ function testUnion(maxNodeSize: number) {
       tree2.set(key, key * 10);
     }
 
-    const preferLeft: UnionFn = (_key, leftValue) => leftValue;
-
-    const { result } = expectUnionMatchesBaseline(tree1, tree2, preferLeft, undefined, {
-      expectedUnionFn: preferLeft
-    });
+    const { result } = expectUnionMatchesBaseline(tree1, tree2, preferLeft);
 
     expect(result.size).toBe(size + size - overlap);
     for (let i = 0; i < offset; i++)
@@ -754,21 +680,19 @@ function testUnion(maxNodeSize: number) {
 }
 
 describe('BTree union input/output validation', () => {
-    test('Union throws error when comparators differ', () => {
+  test('Union throws error when comparators differ', () => {
     const tree1 = new BTreeEx<number, number>([[1, 10]], (a, b) => b + a);
     const tree2 = new BTreeEx<number, number>([[2, 20]], (a, b) => b - a);
-    const unionFn: UnionFn = (_k, v1, v2) => v1 + v2;
 
-    expect(() => tree1.union(tree2, unionFn)).toThrow(comparatorErrorMsg);
+    expect(() => tree1.union(tree2, (_k, v1, v2) => v1 + v2)).toThrow(comparatorErrorMsg);
   });
 
   test('Union throws error when max node sizes differ', () => {
     const compare = (a: number, b: number) => b - a;
     const tree1 = new BTreeEx<number, number>([[1, 10]], compare, 32);
     const tree2 = new BTreeEx<number, number>([[2, 20]], compare, 33);
-    const unionFn: UnionFn = (_k, v1, v2) => v1 + v2;
 
-    expect(() => tree1.union(tree2, unionFn)).toThrow(branchingFactorErrorMsg);
+    expect(() => tree1.union(tree2, (_k, v1, v2) => v1 + v2)).toThrow(branchingFactorErrorMsg);
   });
 
   test('Union returns a tree of the same class', () => {
