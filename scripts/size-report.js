@@ -73,8 +73,8 @@ const header =
 console.log(header);
 console.log('-'.repeat(header.length));
 
-const nonCoreTotals = { raw: 0, min: 0, gz: 0 };
-const nonCoreHasValue = { raw: false, min: false, gz: false };
+const btreeExTransitive = { raw: 0, min: 0, gz: 0 };
+const btreeExTransitiveHasValue = { raw: false, min: false, gz: false };
 
 entryPoints.forEach((entry, index) => {
   const raw = fileSize(entry.raw);
@@ -88,26 +88,26 @@ entryPoints.forEach((entry, index) => {
   console.log(line);
   if (index > 0) {
     if (typeof raw === 'number') {
-      nonCoreTotals.raw += raw;
-      nonCoreHasValue.raw = true;
+      btreeExTransitive.raw += raw;
+      btreeExTransitiveHasValue.raw = true;
     }
     if (typeof min === 'number') {
-      nonCoreTotals.min += min;
-      nonCoreHasValue.min = true;
+      btreeExTransitive.min += min;
+      btreeExTransitiveHasValue.min = true;
     }
     if (typeof gz === 'number') {
-      nonCoreTotals.gz += gz;
-      nonCoreHasValue.gz = true;
+      btreeExTransitive.gz += gz;
+      btreeExTransitiveHasValue.gz = true;
     }
   }
 });
 
 if (entryPoints.length > 1) {
   const line =
-    pad('Non-core total', nameColumnWidth) +
-    pad(nonCoreHasValue.raw ? formatBytes(nonCoreTotals.raw) : 'n/a', 13) +
-    pad(nonCoreHasValue.min ? formatBytes(nonCoreTotals.min) : 'n/a', 13) +
-    (nonCoreHasValue.gz ? formatBytes(nonCoreTotals.gz) : 'n/a');
+    pad('BTreeEx transitive', nameColumnWidth) +
+    pad(btreeExTransitiveHasValue.raw ? formatBytes(btreeExTransitive.raw) : 'n/a', 13) +
+    pad(btreeExTransitiveHasValue.min ? formatBytes(btreeExTransitive.min) : 'n/a', 13) +
+    (btreeExTransitiveHasValue.gz ? formatBytes(btreeExTransitive.gz) : 'n/a');
   console.log('-'.repeat(header.length));
   console.log(line);
 }
