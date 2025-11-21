@@ -154,6 +154,65 @@ export function buildEntriesFromMap(
   return entries;
 }
 
+export type FuzzTreeSpec = {
+  tree: BTree<number, number>;
+  fraction: number;
+  removalChance?: number;
+};
+
+export type PopulateFuzzTreesOptions = {
+  size: number;
+  rng: MersenneTwister;
+  compare: (a: number, b: number) => number;
+  maxNodeSize: number;
+  minAssignmentsPerKey?: number;
+};
+
+export function populateFuzzTrees(
+  specs: FuzzTreeSpec[],
+  { size, rng, compare, maxNodeSize, minAssignmentsPerKey = 0 }: PopulateFuzzTreesOptions
+): TreeEntries[] {
+  if (specs.length === 0)
+    return [];
+
+  const keys = makeArray(size, true, 1, rng);
+  const entriesMaps = specs.map(() => new Map<number, number>());
+  const assignments = new Array<boolean>(specs.length);
+  const requiredAssignments = Math.min(minAssignmentsPerKey, specs.length);
+
+  for (const value of keys) {
+    let assignedCount = 0;
+    for (let i = 0; i < specs.length; i++) {
+      assignments[i] = rng.random() < specs[i].fraction;
+      if (assignments[i])
+        assignedCount++;
+    }
+
+    while (assignedCount < requiredAssignments && specs.length > 0) {
+      const index = randomInt(rng, specs.length);
+      if (!assignments[index]) {
+        assignments[index] = true;
+        assignedCount++;
+      }
+    }
+
+    for (let i = 0; i < specs.length; i++) {
+      if (assignments[i]) {
+        specs[i].tree.set(value, value);
+        entriesMaps[i].set(value, value);
+      }
+    }
+  }
+
+  return specs.map((spec, index) => {
+    let entries = buildEntriesFromMap(entriesMaps[index], compare);
+    const removalChance = spec.removalChance ?? 0;
+    if (removalChance > 0)
+      entries = applyRemovalRunsToTree(spec.tree, entries, removalChance, maxNodeSize, rng);
+    return entries;
+  });
+}
+
 export function applyRemovalRunsToTree(
   tree: BTree<number, number>,
   entries: TreeEntries,

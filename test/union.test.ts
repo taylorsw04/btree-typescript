@@ -4,11 +4,10 @@ import union from '../extended/union';
 import { branchingFactorErrorMsg, comparatorErrorMsg } from '../extended/shared';
 import MersenneTwister from 'mersenne-twister';
 import {
-  applyRemovalRunsToTree,
-  buildEntriesFromMap,
   expectTreeMatchesEntries,
   forEachFuzzCase,
   makeArray,
+  populateFuzzTrees,
   randomInt,
   SetOperationFuzzSettings
 } from './shared';
@@ -799,36 +798,13 @@ describe('BTree union fuzz tests', () => {
     test(`branch ${maxNodeSize}, size ${size}, fractionA ${fractionA.toFixed(2)}, fractionB ${fractionB.toFixed(2)}, removal ${removalLabel}`, () => {
       const treeA = new BTreeEx<number, number>([], compare, maxNodeSize);
       const treeB = new BTreeEx<number, number>([], compare, maxNodeSize);
-
-      const keys = makeArray(size, true, 1, rng);
-      const entriesMapA = new Map<number, number>();
-      const entriesMapB = new Map<number, number>();
-
-      for (const value of keys) {
-        let assignToA = rng.random() < fractionA;
-        let assignToB = rng.random() < fractionB;
-        if (!assignToA && !assignToB) {
-          if (rng.random() < 0.5)
-            assignToA = true;
-          else
-            assignToB = true;
-        }
-
-        if (assignToA) {
-          treeA.set(value, value);
-          entriesMapA.set(value, value);
-        }
-        if (assignToB) {
-          treeB.set(value, value);
-          entriesMapB.set(value, value);
-        }
-      }
-
-      let treeAEntries = buildEntriesFromMap(entriesMapA, compare);
-      let treeBEntries = buildEntriesFromMap(entriesMapB, compare);
-
-      treeAEntries = applyRemovalRunsToTree(treeA, treeAEntries, removalChance, maxNodeSize, rng);
-      treeBEntries = applyRemovalRunsToTree(treeB, treeBEntries, removalChance, maxNodeSize, rng);
+      const [treeAEntries, treeBEntries] = populateFuzzTrees(
+        [
+          { tree: treeA, fraction: fractionA, removalChance },
+          { tree: treeB, fraction: fractionB, removalChance }
+        ],
+        { rng, size, compare, maxNodeSize, minAssignmentsPerKey: 1 }
+      );
 
       const unioned = treeA.union(treeB, unionFn);
       unioned.checkValid();

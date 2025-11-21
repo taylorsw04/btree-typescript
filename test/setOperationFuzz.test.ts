@@ -1,12 +1,9 @@
 import BTreeEx from '../extended';
 import MersenneTwister from 'mersenne-twister';
 import {
-  applyRemovalRunsToTree,
-  buildEntriesFromMap,
   expectTreeMatchesEntries,
   forEachFuzzCase,
-  makeArray,
-  TreeEntries,
+  populateFuzzTrees,
   SetOperationFuzzSettings
 } from './shared';
 
@@ -30,37 +27,14 @@ describe('Set operation fuzz tests', () => {
       const treeA = new BTreeEx<number, number>([], compare, maxNodeSize);
       const treeB = new BTreeEx<number, number>([], compare, maxNodeSize);
       const treeC = new BTreeEx<number, number>([], compare, maxNodeSize);
-      const entriesMapA = new Map<number, number>();
-      const entriesMapB = new Map<number, number>();
-      const entriesMapC = new Map<number, number>();
-
-      const keys = makeArray(size, true, 1, rng);
-
-      for (const value of keys) {
-        const assignToA = rng.random() < fractionA;
-        const assignToB = rng.random() < fractionB;
-        const assignToC = rng.random() < 0.5;
-
-        if (assignToA) {
-          treeA.set(value, value);
-          entriesMapA.set(value, value);
-        }
-        if (assignToB) {
-          treeB.set(value, value);
-          entriesMapB.set(value, value);
-        }
-        if (assignToC) {
-          treeC.set(value, value);
-          entriesMapC.set(value, value);
-        }
-      }
-
-      let treeAEntries: TreeEntries = buildEntriesFromMap(entriesMapA, compare);
-      let treeBEntries: TreeEntries = buildEntriesFromMap(entriesMapB, compare);
-      const treeCEntries: TreeEntries = buildEntriesFromMap(entriesMapC, compare);
-
-      treeAEntries = applyRemovalRunsToTree(treeA, treeAEntries, removalChance, maxNodeSize, rng);
-      treeBEntries = applyRemovalRunsToTree(treeB, treeBEntries, removalChance, maxNodeSize, rng);
+      const [treeAEntries, treeBEntries, treeCEntries] = populateFuzzTrees(
+        [
+          { tree: treeA, fraction: fractionA, removalChance },
+          { tree: treeB, fraction: fractionB, removalChance },
+          { tree: treeC, fraction: 0.5 }
+        ],
+        { rng, size, compare, maxNodeSize }
+      );
 
       const keepEither = (_k: number, left: number, _right: number) => left;
       const dropValue = () => undefined;

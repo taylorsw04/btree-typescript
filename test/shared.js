@@ -3,7 +3,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.forEachFuzzCase = exports.expectTreeMatchesEntries = exports.applyRemovalRunsToTree = exports.buildEntriesFromMap = exports.randomInt = exports.makeArray = exports.addToBoth = exports.expectTreeEqualTo = exports.randInt = exports.logTreeNodeStats = exports.countTreeNodeStats = void 0;
+exports.forEachFuzzCase = exports.expectTreeMatchesEntries = exports.applyRemovalRunsToTree = exports.populateFuzzTrees = exports.buildEntriesFromMap = exports.randomInt = exports.makeArray = exports.addToBoth = exports.expectTreeEqualTo = exports.randInt = exports.logTreeNodeStats = exports.countTreeNodeStats = void 0;
 var mersenne_twister_1 = __importDefault(require("mersenne-twister"));
 var rand = new mersenne_twister_1.default(1234);
 function countTreeNodeStats(tree) {
@@ -111,6 +111,46 @@ function buildEntriesFromMap(entriesMap, compareFn) {
     return entries;
 }
 exports.buildEntriesFromMap = buildEntriesFromMap;
+function populateFuzzTrees(specs, _a) {
+    var size = _a.size, rng = _a.rng, compare = _a.compare, maxNodeSize = _a.maxNodeSize, _b = _a.minAssignmentsPerKey, minAssignmentsPerKey = _b === void 0 ? 0 : _b;
+    if (specs.length === 0)
+        return [];
+    var keys = makeArray(size, true, 1, rng);
+    var entriesMaps = specs.map(function () { return new Map(); });
+    var assignments = new Array(specs.length);
+    var requiredAssignments = Math.min(minAssignmentsPerKey, specs.length);
+    for (var _i = 0, keys_1 = keys; _i < keys_1.length; _i++) {
+        var value = keys_1[_i];
+        var assignedCount = 0;
+        for (var i = 0; i < specs.length; i++) {
+            assignments[i] = rng.random() < specs[i].fraction;
+            if (assignments[i])
+                assignedCount++;
+        }
+        while (assignedCount < requiredAssignments && specs.length > 0) {
+            var index = (0, exports.randomInt)(rng, specs.length);
+            if (!assignments[index]) {
+                assignments[index] = true;
+                assignedCount++;
+            }
+        }
+        for (var i = 0; i < specs.length; i++) {
+            if (assignments[i]) {
+                specs[i].tree.set(value, value);
+                entriesMaps[i].set(value, value);
+            }
+        }
+    }
+    return specs.map(function (spec, index) {
+        var _a;
+        var entries = buildEntriesFromMap(entriesMaps[index], compare);
+        var removalChance = (_a = spec.removalChance) !== null && _a !== void 0 ? _a : 0;
+        if (removalChance > 0)
+            entries = applyRemovalRunsToTree(spec.tree, entries, removalChance, maxNodeSize, rng);
+        return entries;
+    });
+}
+exports.populateFuzzTrees = populateFuzzTrees;
 function applyRemovalRunsToTree(tree, entries, removalChance, branchingFactor, rng) {
     if (removalChance <= 0 || entries.length === 0)
         return entries;
