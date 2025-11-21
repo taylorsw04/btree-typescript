@@ -1505,8 +1505,6 @@ function sumChildSizes(children) {
 exports.sumChildSizes = sumChildSizes;
 /**
  * Determines whether two nodes are overlapping in key range.
- * Takes the leftmost known key of each node to avoid a log(n) min calculation.
- * This will still catch overlapping nodes because of the alternate hopping walk of the cursors.
  * @internal
  */
 function areOverlapping(aMin, aMax, bMin, bMax, cmp) {
