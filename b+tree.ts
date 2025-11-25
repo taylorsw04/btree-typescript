@@ -920,8 +920,7 @@ export default class BTree<K=any, V=any> implements ISortedMapF<K,V>, ISortedMap
   /** Scans the tree for signs of serious bugs (e.g. this.size doesn't match
    *  number of elements, internal nodes not caching max element properly...)
    *  Computational complexity: O(number of nodes), i.e. O(size). This method
-   *  skips the most expensive test - whether all keys are sorted - but it
-   *  does check that maxKey() of the children of internal nodes are sorted. */
+   *  validates ordering of keys (including leaves) and cached size information. */
   checkValid() {
     var [size] = this._root.checkValid(0, this, 0);
     check(size === this.size, "size mismatch: counted ", size, "but stored", this.size);
