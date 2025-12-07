@@ -1524,20 +1524,7 @@ function areOverlapping(aMin, aMax, bMin, bMax, cmp) {
     // 4.      aMin....aMax
     //     bMin.............bMax
     // (bMin and bMax enclose aMin and aMax; note equality cases are identical to case 3)
-    var aMinBMin = cmp(aMin, bMin);
-    var aMinBMax = cmp(aMin, bMax);
-    if (aMinBMin >= 0 && aMinBMax <= 0) {
-        // case 2 or 4
-        return true;
-    }
-    var aMaxBMin = cmp(aMax, bMin);
-    var aMaxBMax = cmp(aMax, bMax);
-    if (aMaxBMin >= 0 && aMaxBMax <= 0) {
-        // case 1
-        return true;
-    }
-    // case 3 or no overlap
-    return aMinBMin <= 0 && aMaxBMax >= 0;
+    return cmp(aMin, bMax) <= 0 && cmp(aMax, bMin) >= 0;
 }
 exports.areOverlapping = areOverlapping;
 var Delete = { delete: true }, DeleteRange = function () { return Delete; };

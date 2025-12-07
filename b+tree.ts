@@ -1678,20 +1678,7 @@ export function areOverlapping<K,V>(
   // 4.      aMin....aMax
   //     bMin.............bMax
   // (bMin and bMax enclose aMin and aMax; note equality cases are identical to case 3)
-  const aMinBMin = cmp(aMin, bMin);
-  const aMinBMax = cmp(aMin, bMax);
-  if (aMinBMin >= 0 && aMinBMax <= 0) {
-    // case 2 or 4
-    return true;
-  }
-  const aMaxBMin = cmp(aMax, bMin);
-  const aMaxBMax = cmp(aMax, bMax);
-  if (aMaxBMin >= 0 && aMaxBMax <= 0) {
-    // case 1
-    return true;
-  }
-  // case 3 or no overlap
-  return aMinBMin <= 0 && aMaxBMax >= 0;
+  return cmp(aMin, bMax) <= 0 && cmp(aMax, bMin) >= 0;
 }
 
 const Delete = {delete: true}, DeleteRange = () => Delete;
