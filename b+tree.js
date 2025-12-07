@@ -824,9 +824,11 @@ var BTree = /** @class */ (function () {
     /** Scans the tree for signs of serious bugs (e.g. this.size doesn't match
      *  number of elements, internal nodes not caching max element properly...)
      *  Computational complexity: O(number of nodes), i.e. O(size). This method
-     *  validates ordering of keys (including leaves) and cached size information. */
-    BTree.prototype.checkValid = function () {
-        var size = this._root.checkValid(0, this, 0)[0];
+     *  validates cached size information and, optionally, the ordering of
+     *  keys (including leaves). */
+    BTree.prototype.checkValid = function (checkOrdering) {
+        if (checkOrdering === void 0) { checkOrdering = false; }
+        var size = this._root.checkValid(0, this, 0, checkOrdering)[0];
         check(size === this.size, "size mismatch: counted ", size, "but stored", this.size);
     };
     return BTree;
@@ -994,7 +996,7 @@ var BNode = /** @class */ (function () {
         }
         return undefined;
     };
-    BNode.prototype.checkValid = function (depth, tree, baseIndex) {
+    BNode.prototype.checkValid = function (depth, tree, baseIndex, checkOrdering) {
         var kL = this.keys.length, vL = this.values.length;
         check(this.values === undefVals ? kL <= vL : kL === vL, "keys/values length mismatch: depth", depth, "with lengths", kL, vL, "and baseIndex", baseIndex);
         // Note: we don't check for "node too small" because sometimes a node
@@ -1003,9 +1005,11 @@ var BNode = /** @class */ (function () {
         // it can't be merged with adjacent nodes. However, the parent will
         // verify that the average node size is at least half of the maximum.
         check(depth == 0 || kL > 0, "empty leaf at depth", depth, "and baseIndex", baseIndex);
-        for (var i = 1; i < kL; i++) {
-            var c = tree._compare(this.keys[i - 1], this.keys[i]);
-            check(c < 0, "keys out of order at depth", depth, "and baseIndex", baseIndex + i - 1, ": ", this.keys[i - 1], " !< ", this.keys[i]);
+        if (checkOrdering === true) {
+            for (var i = 1; i < kL; i++) {
+                var c = tree._compare(this.keys[i - 1], this.keys[i]);
+                check(c < 0, "keys out of order at depth", depth, "and baseIndex", baseIndex + i - 1, ": ", this.keys[i - 1], " !< ", this.keys[i]);
+            }
         }
         return [kL, this.keys[0], this.keys[kL - 1]];
     };
@@ -1230,7 +1234,7 @@ var BNodeInternal = /** @class */ (function (_super) {
         }
         return result;
     };
-    BNodeInternal.prototype.checkValid = function (depth, tree, baseIndex) {
+    BNodeInternal.prototype.checkValid = function (depth, tree, baseIndex, checkOrdering) {
         var kL = this.keys.length, cL = this.children.length;
         check(kL === cL, "keys/children length mismatch: depth", depth, "lengths", kL, cL, "baseIndex", baseIndex);
         check(kL > 1 || depth > 0, "internal node has length", kL, "at depth", depth, "baseIndex", baseIndex);
@@ -1239,10 +1243,10 @@ var BNodeInternal = /** @class */ (function (_super) {
         var prevMaxKey = undefined;
         for (var i = 0; i < cL; i++) {
             var child = c[i];
-            var _a = child.checkValid(depth + 1, tree, baseIndex + size), subtreeSize = _a[0], minKey = _a[1], maxKey = _a[2];
+            var _a = child.checkValid(depth + 1, tree, baseIndex + size, checkOrdering), subtreeSize = _a[0], minKey = _a[1], maxKey = _a[2];
             check(subtreeSize === child.size(), "cached size mismatch at depth", depth, "index", i, "baseIndex", baseIndex);
             check(subtreeSize === 1 || tree._compare(minKey, maxKey) < 0, "child node keys not sorted at depth", depth, "index", i, "baseIndex", baseIndex);
-            if (prevMinKey !== undefined && prevMaxKey !== undefined) {
+            if (prevMinKey !== undefined && prevMaxKey !== undefined && checkOrdering) {
                 check(!areOverlapping(prevMinKey, prevMaxKey, minKey, maxKey, tree._compare), "children keys not sorted at depth", depth, "index", i, "baseIndex", baseIndex, ": ", prevMaxKey, " !< ", minKey);
                 check(tree._compare(prevMaxKey, minKey) < 0, "children keys not sorted at depth", depth, "index", i, "baseIndex", baseIndex, ": ", prevMaxKey, " !< ", minKey);
             }

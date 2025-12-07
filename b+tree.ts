@@ -920,9 +920,10 @@ export default class BTree<K=any, V=any> implements ISortedMapF<K,V>, ISortedMap
   /** Scans the tree for signs of serious bugs (e.g. this.size doesn't match
    *  number of elements, internal nodes not caching max element properly...)
    *  Computational complexity: O(number of nodes), i.e. O(size). This method
-   *  validates ordering of keys (including leaves) and cached size information. */
-  checkValid() {
-    var [size] = this._root.checkValid(0, this, 0);
+   *  validates cached size information and, optionally, the ordering of
+   *  keys (including leaves). */
+  checkValid(checkOrdering = false) {
+    var [size] = this._root.checkValid(0, this, 0, checkOrdering);
     check(size === this.size, "size mismatch: counted ", size, "but stored", this.size);
   }
 }
@@ -1111,7 +1112,7 @@ export class BNode<K,V> {
     return undefined;
   }
 
-  checkValid(depth: number, tree: BTree<K,V>, baseIndex: number): [size: number, min: K, max: K] {
+  checkValid(depth: number, tree: BTree<K,V>, baseIndex: number, checkOrdering: boolean): [size: number, min: K, max: K] {
     var kL = this.keys.length, vL = this.values.length;
     check(this.values === undefVals ? kL <= vL : kL === vL,
       "keys/values length mismatch: depth", depth, "with lengths", kL, vL, "and baseIndex", baseIndex);
@@ -1121,10 +1122,12 @@ export class BNode<K,V> {
     // it can't be merged with adjacent nodes. However, the parent will
     // verify that the average node size is at least half of the maximum.
     check(depth == 0 || kL > 0, "empty leaf at depth", depth, "and baseIndex", baseIndex);
-    for (var i = 1; i < kL; i++) {
-      var c = tree._compare(this.keys[i-1], this.keys[i]);
-      check(c < 0, "keys out of order at depth", depth, "and baseIndex", baseIndex + i - 1,
-        ": ", this.keys[i-1], " !< ", this.keys[i]);
+    if (checkOrdering === true) {
+      for (var i = 1; i < kL; i++) {
+        var c = tree._compare(this.keys[i-1], this.keys[i]);
+        check(c < 0, "keys out of order at depth", depth, "and baseIndex", baseIndex + i - 1,
+          ": ", this.keys[i-1], " !< ", this.keys[i]);
+      }
     }
     return [kL, this.keys[0], this.keys[kL - 1]];
   }
@@ -1364,7 +1367,7 @@ export class BNodeInternal<K,V> extends BNode<K,V> {
     return result;
   }
 
-  checkValid(depth: number, tree: BTree<K,V>, baseIndex: number): [size: number, min: K, max: K] {
+  checkValid(depth: number, tree: BTree<K,V>, baseIndex: number, checkOrdering: boolean): [size: number, min: K, max: K] {
     let kL = this.keys.length, cL = this.children.length;
     check(kL === cL, "keys/children length mismatch: depth", depth, "lengths", kL, cL, "baseIndex", baseIndex);
     check(kL > 1 || depth > 0, "internal node has length", kL, "at depth", depth, "baseIndex", baseIndex);
@@ -1373,10 +1376,10 @@ export class BNodeInternal<K,V> extends BNode<K,V> {
     let prevMaxKey: K | undefined = undefined;
     for (var i = 0; i < cL; i++) {
       var child = c[i];
-      var [subtreeSize, minKey, maxKey] = child.checkValid(depth + 1, tree, baseIndex + size);
+      var [subtreeSize, minKey, maxKey] = child.checkValid(depth + 1, tree, baseIndex + size, checkOrdering);
       check(subtreeSize === child.size(), "cached size mismatch at depth", depth, "index", i, "baseIndex", baseIndex);
       check(subtreeSize === 1 || tree._compare(minKey, maxKey) < 0, "child node keys not sorted at depth", depth, "index", i, "baseIndex", baseIndex);
-      if (prevMinKey !== undefined && prevMaxKey !== undefined) {
+      if (prevMinKey !== undefined && prevMaxKey !== undefined && checkOrdering) {
         check(!areOverlapping(prevMinKey, prevMaxKey, minKey, maxKey, tree._compare), "children keys not sorted at depth", depth, "index", i, "baseIndex", baseIndex,
           ": ", prevMaxKey, " !< ", minKey);
         check(tree._compare(prevMaxKey, minKey) < 0, "children keys not sorted at depth", depth, "index", i, "baseIndex", baseIndex,
