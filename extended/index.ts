@@ -36,7 +36,6 @@ export class BTreeEx<K = any, V = any> extends BTree<K, V> {
     const tree = new BTreeEx<K, V>(undefined, cmp, maxNodeSize);
     const target = tree as unknown as BTreeWithInternals<K, V>;
     target._root = root;
-    //target._size = root.size();
     return tree;
   }
 

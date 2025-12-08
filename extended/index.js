@@ -74,7 +74,6 @@ var BTreeEx = /** @class */ (function (_super) {
         var tree = new BTreeEx(undefined, cmp, maxNodeSize);
         var target = tree;
         target._root = root;
-        //target._size = root.size();
         return tree;
     };
     /** See {@link BTree.clone}. */
