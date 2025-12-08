@@ -37,7 +37,7 @@ function buildTreeFromPairs(maxNodeSize: number, pairs: Pair[], loadFactor: numb
 }
 
 function expectTreeMatches(tree: BTree<number, number>, expected: Pair[]) {
-  tree.checkValid();
+  tree.checkValid(true);
   expect(tree.size).toBe(expected.length);
   expect(tree.toArray()).toEqual(expected);
 }
