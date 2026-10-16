@@ -4,6 +4,7 @@ import diffAgainst from './diffAgainst';
 import forEachKeyInBoth from './forEachKeyInBoth';
 import forEachKeyNotIn from './forEachKeyNotIn';
 import intersect from './intersect';
+import isSupersetOf from './isSupersetOf';
 import subtract from './subtract';
 import union from './union';
 import { bulkLoadRoot } from './bulkLoad';
@@ -124,6 +125,23 @@ export class BTreeEx<K = any, V = any> extends BTree<K, V> {
     callback: (key: K, value: V) => { break?: R } | void
   ): R | undefined {
     return forEachKeyNotIn(this, other, callback);
+  }
+
+  /**
+   * Returns whether this tree contains every key in `other`, with equal values by default. Extra keys are allowed.
+   * Neither tree is modified. Uses cursors to skip ranges unique to this tree and exits at the first missing key
+   * or unequal value.
+   * Time complexity is O(N + M) in the worst case, with O(H) auxiliary space for the cursor paths.
+   * Empty subsets, shared roots, and insufficient size are handled without walking the trees.
+   * @param other The tree whose keys must all be present in this tree.
+   * @param compareValues Whether values for matching keys must be equal using `Object.is`. Defaults to true.
+   * Pass false to compare keys only.
+   * @returns True if every key in `other` is present in this tree and any required value comparisons match.
+   * Always true when `other` is empty.
+   * @throws Error if the trees were created with different comparators, even if either tree is empty.
+   */
+  isSupersetOf<VOther>(other: BTree<K, VOther>, compareValues = true): boolean {
+    return isSupersetOf(this, other, compareValues);
   }
 
   /**

@@ -43,6 +43,7 @@ var diffAgainst_1 = __importDefault(require("./diffAgainst"));
 var forEachKeyInBoth_1 = __importDefault(require("./forEachKeyInBoth"));
 var forEachKeyNotIn_1 = __importDefault(require("./forEachKeyNotIn"));
 var intersect_1 = __importDefault(require("./intersect"));
+var isSupersetOf_1 = __importDefault(require("./isSupersetOf"));
 var subtract_1 = __importDefault(require("./subtract"));
 var union_1 = __importDefault(require("./union"));
 var bulkLoad_1 = require("./bulkLoad");
@@ -145,6 +146,23 @@ var BTreeEx = /** @class */ (function (_super) {
      */
     BTreeEx.prototype.forEachKeyNotIn = function (other, callback) {
         return (0, forEachKeyNotIn_1.default)(this, other, callback);
+    };
+    /**
+     * Returns whether this tree contains every key in `other`, with equal values by default. Extra keys are allowed.
+     * Neither tree is modified. Uses cursors to skip ranges unique to this tree and exits at the first missing key
+     * or unequal value.
+     * Time complexity is O(N + M) in the worst case, with O(H) auxiliary space for the cursor paths.
+     * Empty subsets, shared roots, and insufficient size are handled without walking the trees.
+     * @param other The tree whose keys must all be present in this tree.
+     * @param compareValues Whether values for matching keys must be equal using `Object.is`. Defaults to true.
+     * Pass false to compare keys only.
+     * @returns True if every key in `other` is present in this tree and any required value comparisons match.
+     * Always true when `other` is empty.
+     * @throws Error if the trees were created with different comparators, even if either tree is empty.
+     */
+    BTreeEx.prototype.isSupersetOf = function (other, compareValues) {
+        if (compareValues === void 0) { compareValues = true; }
+        return (0, isSupersetOf_1.default)(this, other, compareValues);
     };
     /**
      * Returns a new tree containing only keys present in both trees.

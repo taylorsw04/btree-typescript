@@ -91,6 +91,7 @@ The "scanning" methods (`forEach, forRange, editRange, deleteRange`) will normal
 - Find differences between two trees, quickly skipping shared subtrees: `tree1.diffAgainst(tree2, function tree1Only(k, v) {}, function tree2Only(k, v) {}, function different(k, v1, v2) {})` (standalone: `diffAgainst(treeA, treeB, ...)`)
 - Examine keys shared between two trees: `tree1.forEachKeyInBoth(tree2, (k, val1, val2) => {...})`
 - Examine keys unique to this tree: `tree1.forEachKeyNotIn(tree2, (k, v) => {...})`
+- Check whether this tree contains every entry in another tree: `tree1.isSupersetOf(tree2)` (standalone: `isSupersetOf(tree1, tree2)`). Extra keys are allowed, and values for equal keys must match using `Object.is` by default. Pass `false` as the final argument to either API to compare keys only. Uses cursors and stops at the first missing key or unequal value. An empty tree is a subset of every tree; both trees must use the same comparator, but may have different max node sizes.
 - Get the intersection (overlap) between two trees: `tree1.intersect(tree2, (k, val1, val2) => val1)`
 - Get the union (combination) of two trees: `tree1.union(tree2, (k, val1, val2) => val1)`
 - Get a copy without keys from another tree: `tree1.subtract(tree2)`
@@ -109,6 +110,7 @@ Alternately, you can continue using `BTree` but import individual algorithms ins
 
 ```ts
 import diffAgainst from 'sorted-btree/extended/diffAgainst';
+import isSupersetOf from 'sorted-btree/extended/isSupersetOf';
 ```
 
 `BTreeEx` is a drop-in subclass of `BTree` that keeps advanced helpers on the instance, while the standalone `diffAgainst` entry point lets bundlers include only that function when you don't need the rest of the extended surface.

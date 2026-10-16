@@ -1,4 +1,5 @@
 import BTreeEx from '../extended';
+import isSupersetOf from '../extended/isSupersetOf';
 import MersenneTwister from 'mersenne-twister';
 import {
   expectTreeMatchesEntries,
@@ -102,6 +103,23 @@ describe('Set operation fuzz tests', () => {
       // 11. Superset sanity.
       expect(treeA.subtract(treeA.union(treeB, keepEither)).size).toBe(0);
       expect(diffAB.intersect(treeB, keepEither).size).toBe(0);
+      const keysA = new Set(treeAEntries.map(([key]) => key));
+      const keysB = new Set(treeBEntries.map(([key]) => key));
+      const aContainsB = treeBEntries.every(([key]) => keysA.has(key));
+      const bContainsA = treeAEntries.every(([key]) => keysB.has(key));
+      expect(treeA.isSupersetOf(treeB)).toBe(aContainsB);
+      expect(isSupersetOf(treeA, treeB)).toBe(aContainsB);
+      expect(treeB.isSupersetOf(treeA)).toBe(bContainsA);
+      expect(isSupersetOf(treeB, treeA)).toBe(bContainsA);
+      expect(unionKeep.isSupersetOf(treeA)).toBe(true);
+      expect(unionKeep.isSupersetOf(treeB)).toBe(true);
+      expect(treeA.isSupersetOf(intersection)).toBe(true);
+      expect(treeB.isSupersetOf(intersection)).toBe(true);
+      const unequalValues = intersection.mapValues(value => -value - 1);
+      expect(treeA.isSupersetOf(unequalValues)).toBe(intersection.size === 0);
+      expect(isSupersetOf(treeA, unequalValues)).toBe(intersection.size === 0);
+      expect(treeA.isSupersetOf(unequalValues, false)).toBe(true);
+      expect(isSupersetOf(treeA, unequalValues, false)).toBe(true);
 
       // 12. Cardinality relations.
       expect(unionKeep.size).toBe(treeA.size + treeB.size - intersection.size);
